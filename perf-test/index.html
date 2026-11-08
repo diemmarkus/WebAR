@@ -7,7 +7,16 @@
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #111; font-family: system-ui, sans-serif; color: #fff; }
     #info { position: absolute; top: 0; left: 0; right: 0; padding: 16px; text-align: center; font-size: 15px; line-height: 1.4; pointer-events: none; }
-    #back { position: absolute; bottom: 72px; left: 50%; transform: translateX(-50%); color: #fff; opacity: .7; font-size: 14px; text-decoration: none; }
+    /* Bottom bar: back button sits left of three.js' AR button, styled to match it */
+    #bar { position: absolute; bottom: 20px; left: 0; right: 0; display: flex; justify-content: center; align-items: stretch; gap: 10px; z-index: 3; pointer-events: none; }
+    #bar > :not(#back) { position: static !important; pointer-events: auto; }
+    #back {
+      display: flex; align-items: center; padding: 12px 10px; border: 1px solid #fff; border-radius: 4px;
+      background: rgba(0,0,0,0.1); color: #fff; font: normal 13px sans-serif; text-decoration: none;
+      opacity: .5; outline: none; pointer-events: auto;
+    }
+    #back:hover, #back:focus-visible { opacity: 1; }
+    body.ar #back { display: none; }
   </style>
   <script type="importmap">
     { "imports": {
@@ -16,7 +25,7 @@
   </script>
 </head>
 <body>
-  <a id="back" href="../">← Experiments</a>
+  <div id="bar"><a id="back" href="../">← EXPERIMENTS</a></div>
   <div id="info">Bare minimum: one unlit cube, no hands, no lights, no hit-test.<br>Start AR and read the fps number.</div>
 
   <script type="module">
@@ -48,7 +57,7 @@
     scene.add(camera);
     let n = 0, last = performance.now();
 
-    document.body.appendChild(ARButton.createButton(renderer));
+    document.getElementById('bar').appendChild(ARButton.createButton(renderer));
 
     renderer.setAnimationLoop(() => {
       cube.rotation.y += 0.01;

@@ -15,7 +15,16 @@
     body.ar { background: transparent; }
     #debug { position: absolute; left: 8px; bottom: 8px; z-index: 3; font: 11px/1.3 ui-monospace, monospace; color: #fffc; background: #0008; padding: 4px 6px; border-radius: 4px; display: none; pointer-events: none; }
     body.ar #debug { display: block; }
-    #back { position: absolute; bottom: 72px; left: 50%; transform: translateX(-50%); z-index: 3; color: #fff; opacity: .7; font-size: 14px; text-decoration: none; }
+    /* Bottom bar: back button sits left of three.js' AR button, styled to match it */
+    #bar { position: absolute; bottom: 20px; left: 0; right: 0; display: flex; justify-content: center; align-items: stretch; gap: 10px; z-index: 3; pointer-events: none; }
+    #bar > :not(#back) { position: static !important; pointer-events: auto; }
+    #back {
+      display: flex; align-items: center; padding: 12px 10px; border: 1px solid #fff; border-radius: 4px;
+      background: rgba(0,0,0,0.1); color: #fff; font: normal 13px sans-serif; text-decoration: none;
+      opacity: .5; outline: none; pointer-events: auto;
+    }
+    #back:hover, #back:focus-visible { opacity: 1; }
+    body.ar #back { display: none; }
   </style>
   <script type="importmap">
     {
@@ -27,7 +36,7 @@
   </script>
 </head>
 <body>
-  <a id="back" href="../">← Experiments</a>
+  <div id="bar"><a id="back" href="../">← EXPERIMENTS</a></div>
   <div id="info">Checking for WebXR AR support…</div>
   <div id="debug"></div>
 
@@ -214,7 +223,7 @@
     } else {
       info.innerHTML = 'WebXR AR isn’t available here.<br>Open this page over <b>HTTPS</b> in <b>Chrome on Android</b> (ARCore).';
     }
-    document.body.appendChild(ARButton.createButton(renderer, {
+    document.getElementById('bar').appendChild(ARButton.createButton(renderer, {
       optionalFeatures: ['hit-test', 'hand-tracking', 'dom-overlay'],
       domOverlay: { root: document.body }
     }));
@@ -254,13 +263,11 @@
     renderer.xr.addEventListener('sessionstart', () => {
       previewCube.visible = false;
       document.body.classList.add('ar');
-      document.getElementById('back').style.display = 'none';
       info.textContent = 'Find a surface and tap — or pinch with your fingers on glasses';
     });
     renderer.xr.addEventListener('sessionend', () => {
       previewCube.visible = true;
       document.body.classList.remove('ar');
-      document.getElementById('back').style.display = '';
       reticle.visible = false;
       label.visible = false;
       hitTestSource = null;
