@@ -54,8 +54,8 @@
     const info = document.getElementById('info');
 
     // --- Board: low-res pixel canvases, scaled up crisp ---
-    const CW = 200, CH = 100;      // canvas pixels (~4 mm per pixel on the board)
-    const BW = 0.8, BH = 0.4;      // board size in metres (fits the Spectacles field of view at ~1.5 m)
+    const CW = 300, CH = 150;      // canvas pixels (4 mm per pixel on the board)
+    const BW = 1.2, BH = 0.6;      // board size in metres (same pixel size as before, more slope in view)
     const DEPTH = 0.12;            // CPU layer sits 12 cm behind the player's layer
     const GAP = 0.01;              // back layer 1 cm off the wall
 
@@ -417,7 +417,7 @@
     // Little gauge on the left: where your head is vs. standing height (yellow = duck line, orange = jump line)
     function drawBody(g){
       if(bBase==null)return;
-      const y0=58,sc=180,yy=d=>Math.round(y0-d*sc);
+      const y0=Math.round(CH*0.55),sc=180,yy=d=>Math.round(y0-d*sc);
       R(g,'#FFFFFF',3,yy(0.16),1,yy(-0.2)-yy(0.16));
       R(g,'#FF9A2E',1,yy(JUMP),5,1);R(g,'#FFD23F',1,yy(-DUCK),5,1);
       const d=Math.max(-0.2,Math.min(0.16,bY-bBase));
