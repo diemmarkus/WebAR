@@ -75,6 +75,29 @@
     reticle.visible = false;
     scene.add(reticle);
 
+    // --- Floating label above the circle (DOM text isn't visible on glasses) ---
+    function makeLabelTexture(text) {
+      const c = document.createElement('canvas');
+      c.width = 512; c.height = 128;
+      const g = c.getContext('2d');
+      g.fillStyle = 'rgba(0,0,0,0.55)';
+      g.beginPath(); g.roundRect(4, 4, 504, 120, 60); g.fill();
+      g.fillStyle = '#fff';
+      g.font = '600 52px system-ui, sans-serif';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(text, 256, 66);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    }
+    const labelTex = { pinch: makeLabelTexture('Pinch to place cube'), tap: makeLabelTexture('Tap to place cube') };
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: labelTex.tap, depthTest: false, transparent: true }));
+    label.scale.set(0.24, 0.06, 1); // 24 cm wide
+    label.renderOrder = 10;
+    label.visible = false;
+    scene.add(label);
+    const reticlePos = new THREE.Vector3();
+
     // --- Tap to place a cube where the reticle is ---
     function placeCube(e) {
       if (e && e.data && e.data.hand) return; // hands are handled by pinch detection below
@@ -170,6 +193,7 @@
         if (hitTestSource) hitTestSource.cancel();
         hitTestSource = null;
         reticle.visible = false;
+        label.visible = false;
         info.textContent = `${MAX_CUBES} cubes placed — surface detection off`;
       }
     }
@@ -195,6 +219,7 @@
       document.body.classList.remove('ar');
       document.getElementById('back').style.display = '';
       reticle.visible = false;
+      label.visible = false;
       hitTestSource = null;
       hitTestRequested = false;
       hitTestStopped = false;
@@ -217,6 +242,7 @@
         frames++;
         tracking = !!frame.getViewerPose(refSpace);
         handsTracked = updateHands();
+        label.material.map = handsTracked ? labelTex.pinch : labelTex.tap;
 
         if (hitTestSource) {
           const hits = frame.getHitTestResults(hitTestSource);
@@ -229,6 +255,12 @@
           } else {
             reticle.visible = false;
           }
+        }
+
+        label.visible = reticle.visible;
+        if (label.visible) {
+          reticlePos.setFromMatrixPosition(reticle.matrix);
+          label.position.copy(reticlePos).y += 0.12;
         }
 
         if (frames % 15 === 0) {
