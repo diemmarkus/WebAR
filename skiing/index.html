@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Skiing · WebAR</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #111; font-family: system-ui, sans-serif; color: #fff; }
+    body.ar { background: transparent; }
+    canvas { touch-action: none; }
+    #info {
+      position: absolute; top: 0; left: 0; right: 0;
+      padding: 16px; text-align: center; font-size: 15px; line-height: 1.4;
+      background: linear-gradient(#000a, #0000); pointer-events: none; z-index: 2;
+    }
+    #info b { color: #ffd23f; }
+    /* Bottom bar: back button sits left of three.js' AR button, styled to match it */
+    #bar { position: absolute; bottom: 20px; left: 0; right: 0; display: flex; justify-content: center; align-items: stretch; gap: 10px; z-index: 3; pointer-events: none; }
+    #bar > :not(#back) { position: static !important; pointer-events: auto; }
+    #back {
+      display: flex; align-items: center; padding: 12px 10px; border: 1px solid #fff; border-radius: 4px;
+      background: rgba(0,0,0,0.1); color: #fff; font: normal 13px sans-serif; text-decoration: none;
+      opacity: .5; outline: none; pointer-events: auto;
+    }
+    #back:hover, #back:focus-visible { opacity: 1; }
+    body.ar #back { display: none; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="bar"><a id="back" href="../">← EXPERIMENTS</a></div>
+  <div id="info">Checking for WebXR AR support…</div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+    /* =====================================================================
+       Skiing in AR: the race from Jonas's game (diemmarkus/maze/skiing),
+       drawn as a single pixel line on a board that hangs on a wall.
+       Your run is the front layer; the CPU rides a second layer 12 cm behind.
+       Pinch (or tap the screen) = tap in the original game, hold = salto.
+       ===================================================================== */
+
+    const info = document.getElementById('info');
+
+    // --- Board: low-res pixel canvases, scaled up crisp ---
+    const CW = 200, CH = 100;      // canvas pixels (~4 mm per pixel on the board)
+    const BW = 0.8, BH = 0.4;      // board size in metres (fits the Spectacles field of view at ~1.5 m)
+    const DEPTH = 0.12;            // CPU layer sits 12 cm behind the player's layer
+    const GAP = 0.01;              // back layer 1 cm off the wall
+
+    // --- Texts (German / English) ---
+    const LANG = {
+      de: { title:'SKIING!', lvl:'LEVEL', yellow:'GELB = $', orange:'ORANGE = SPRUNG', hold:'HALTEN = SALTO', go:'$ = LOS!', move:'LANG HALTEN = UMSETZEN',
+            win:'GEWONNEN!', crash:'GESTÜRZT!', hurdle:'GESTÜRZT!', land:'BRUCHLANDUNG!', slow:'ZU LANGSAM!', next:'$ = WEITER', retry:'$ = NOCHMAL',
+            time:'ZEIT', flips:'SALTOS', cpu:'CPU', wob:'WACKELIG!', finish:'ZIEL', goT:'LOS!',
+            super:'SUPER!', good:'GUT!', oops:'HOPPLA!', jump:'SPRUNG!', flip:'SALTO!', flip2:'DOPPEL!', flip3:'DREIFACH!', ouch:'AUTSCH!',
+            pinch:'PINCH', tap:'TIPP', placeWall:'$: Piste an diese Wand', place:'$: Piste hier · besser an eine Wand',
+            pinchL:'Pinch', tapL:'Tippen',
+            ok:'Tippe <b>Start AR</b>, schau auf eine Wand und pinche (oder tippe), um die Piste dort aufzuhängen.',
+            noAr:'WebXR AR gibt’s hier nicht – unten eine spielbare Vorschau (Tippen / Leertaste).<br>Für AR: <b>Chrome auf Android</b> oder <b>Spectacles</b>.',
+            inAr:'Schau auf eine Wand und tippe' },
+      en: { title:'SKIING!', lvl:'LEVEL', yellow:'YELLOW = $', orange:'ORANGE = JUMP', hold:'HOLD = FLIP', go:'$ = GO!', move:'LONG HOLD = MOVE',
+            win:'YOU WIN!', crash:'WIPEOUT!', hurdle:'WIPEOUT!', land:'CRASH!', slow:'TOO SLOW!', next:'$ = NEXT', retry:'$ = AGAIN',
+            time:'TIME', flips:'FLIPS', cpu:'CPU', wob:'WOBBLY!', finish:'FINISH', goT:'GO!',
+            super:'SUPER!', good:'GOOD!', oops:'OOPS!', jump:'JUMP!', flip:'FLIP!', flip2:'DOUBLE!', flip3:'TRIPLE!', ouch:'OUCH!',
+            pinch:'PINCH', tap:'TAP', placeWall:'$: put the slope on this wall', place:'$: put the slope here · a wall is best',
+            pinchL:'Pinch', tapL:'Tap',
+            ok:'Tap <b>Start AR</b>, look at a wall and pinch (or tap) to hang the slope there.',
+            noAr:'WebXR AR isn’t available here – below is a playable preview (tap / space).<br>For AR use <b>Chrome on Android</b> or <b>Spectacles</b>.',
+            inAr:'Look at a wall and tap' } };
+    let langKey = 'de';
+    try { const s = localStorage.getItem('irrgarten.lang'); langKey = LANG[s] ? s : ((navigator.language || 'de').startsWith('de') ? 'de' : 'en'); } catch (_) {}
+    const T = LANG[langKey];
+    document.documentElement.lang = langKey;
+
+    // =====================================================================
+    // Game logic (ported from the 1-player mode of the original)
+    // =====================================================================
+    function rng(seed){let a=seed>>>0;return()=>{a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+
+    const SLOPE=0.3, G=330, SPIN=720, VMIN=55;
+    let TY_=null,KIND=null,MID=null,mogs=[],ramps=[],hurdles=[],finishX=0,LEN=0,level=1;
+    const PROFILES={
+      mix:{mog:2,ramp:1,hurd:1,gmin:4,gmax:7,A:[6,8.5]},
+      moguls:{mog:4,ramp:.5,hurd:.6,gmin:7,gmax:11,A:[7.5,9.5]},
+      ramps:{mog:1,ramp:2.4,hurd:.6,gmin:3,gmax:4,A:[5.5,7]},
+      hurdles:{mog:1.2,ramp:.6,hurd:2.4,gmin:3,gmax:6,A:[6,8]}};
+    function profileFor(lv){return lv===1?'mix':lv===2?'ramps':lv===3?'hurdles':['moguls','ramps','hurdles','mix'][(lv-4)%4]}
+    function build(lv){
+      const r=rng(lv*7919+17),prof=PROFILES[profileFor(lv)];
+      const goal=Math.min(7500,1500+(lv-1)*550),N=goal+2400;
+      TY_=new Float32Array(N);KIND=new Uint8Array(N);MID=new Int32Array(N).fill(-1);mogs=[];ramps=[];hurdles=[];
+      let x=0,y=0;
+      const put=(yy,k,id)=>{if(x<N){TY_[x]=yy;KIND[x]=k;MID[x]=id==null?-1:id}x++};
+      for(let i=0;i<90;i++)put(y+=0.12,0);
+      const moguls=n=>{for(let j=0;j<n;j++){
+        const P=Math.round(42+r()*10-Math.min(lv,6)),A=prof.A[0]+r()*(prof.A[1]-prof.A[0]),id=mogs.length,x0=x,y0=y;
+        mogs.push({x0,P});
+        r(); // keeps the course identical to the original (it rolled for a tree here)
+        for(let u=0;u<P;u++){const t=u/P;const k=t>=0.03&&t<=0.45?1:(t>=0.52&&t<=0.97?2:0);put(y0+SLOPE*u+A*(1-Math.cos(2*Math.PI*t))/2,k,id)}
+        y=y0+SLOPE*P}};
+      let nRamps=0;
+      const ramp=()=>{
+        const roll=r(),sz=(lv===1&&nRamps===0)?1:lv<=2?(roll<0.6?1:1.5):(roll<0.4?1:roll<0.72?1.5:2.1);nRamps++;
+        for(let i=0;i<26;i++)put(y+=0.22,0);
+        const L=Math.round(58*sz),hgt=22*sz,x0=x,y0=y;
+        for(let i=0;i<L;i++){const t=i/L;put(y0+0.1*i-hgt*t*t,t<0.5?3:4)}
+        const lip=x;y=y0+0.1*L-hgt;ramps.push({x0,L,lip,sz});
+        y+=24*sz;
+        const land=Math.round(300*sz),bend=land-80;
+        for(let i=0;i<land;i++){const sl=i<bend?0.62:0.62-(0.32*(i-bend)/80);put(y+=sl,5)}
+        for(let i=0;i<20;i++)put(y+=SLOPE,0)};
+      const hurdleRun=()=>{
+        const n=2+Math.floor(r()*(lv>=6?3:2));
+        for(let i=0;i<70;i++)put(y+=0.5,6);
+        for(let h=0;h<n;h++){
+          const pool=[['fence',1],['snowman',1],['logs',1],['barrier',1],['cow',1],['goat',1],['yeti',0.25]];
+          let roll=r()*pool.reduce((a,b)=>a+b[1],0),type='fence';for(const[t,wt]of pool){if((roll-=wt)<0){type=t;break}}
+          const w={fence:10,snowman:8,logs:12,barrier:14,cow:14,goat:10,yeti:11}[type],hh={fence:9,snowman:12,logs:7,barrier:8,cow:10,goat:9,yeti:14}[type];
+          hurdles.push({x,w,h:hh,type});
+          const gap=230+Math.floor(r()*60);for(let i=0;i<gap;i++)put(y+=0.5,6);
+        }
+        for(let i=0;i<20;i++)put(y+=SLOPE,0)};
+      let first=true,prev='',run=0;
+      while(x<goal){
+        let sec='mog';
+        if(!first&&x<goal-500){
+          const w={mog:prof.mog,ramp:prof.ramp,hurd:lv>=3&&prev!=='hurd'?prof.hurd:0};
+          const roll=r()*(w.mog+w.ramp+w.hurd);sec=roll<w.mog?'mog':roll<w.mog+w.ramp?'ramp':'hurd';
+          if(sec==='ramp'&&prev==='ramp'&&run>=3)sec='mog';
+        }
+        run=sec===prev?run+1:1;
+        if(sec==='mog')moguls(first?Math.max(4,prof.gmin):prof.gmin+Math.floor(r()*(prof.gmax-prof.gmin+1)));
+        else if(sec==='ramp')ramp();else hurdleRun();
+        if(lv===3&&first){hurdleRun();prev='hurd'}else prev=sec;
+        first=false;
+      }
+      finishX=x+30;
+      while(x<N)put(y+=0.2,0);
+      LEN=N;
+    }
+    function TY(x){if(x<=0)return TY_[0]+x*0.12;const i=Math.floor(x);if(i>=LEN-1)return TY_[LEN-1]+(x-LEN+1)*0.2;const f=x-i;return TY_[i]*(1-f)+TY_[i+1]*f}
+    function slopeAt(x){return(TY(x+2)-TY(x-2))/4}
+    function kindAt(x){const i=Math.floor(x);return i>=0&&i<LEN?KIND[i]:0}
+
+    function mkRider(ai){return{ai,x:40,y:0,v:VMIN,vy:0,air:false,big:false,rot:0,spin:false,held:false,holdT:9,ang:0,wob:0,streak:0,lastM:-1,
+      crashed:false,crashT:0,crashWhy:'',fin:false,finT:0,flips:0,push:0,ramp:0,hi:0,hplan:-1,plan:null,rplan:null,wobT:0}}
+    let P=mkRider(false),A=mkRider(true);
+
+    function launch(r,big){
+      const rp=ramps[r.ramp],sz=rp?rp.sz:1;
+      r.air=true;r.big=big;r.vy=big?-(150+0.2*r.v)*(0.6+0.4*sz):-r.v*0.5;r.rot=0;
+      if(big){r.v+=6;if(!r.ai){pop('jump','#FF9A2E',r);beep('jump')}}
+    }
+    function press(r){
+      r.held=true;r.holdT=0;
+      if(r.crashed||r.air)return;
+      const k=kindAt(r.x);
+      if(k===1){
+        const id=MID[Math.floor(r.x)];if(id===r.lastM)return;r.lastM=id;
+        const m=mogs[id],u=(r.x-m.x0)/m.P,perfect=u>=0.05&&u<=0.24;
+        r.v+=(perfect?20:14)*(r.ai?SK.boost:1);r.push=0.18;r.streak++;if(r.wob&&r.streak>=3)r.wob=0;
+        spray(r,perfect?8:5);
+        if(!r.ai){pop(perfect?'super':'good',perfect?'#FFD23F':'#FFFFFF',r);beep(perfect?'super':'good')}
+      }else if(k===2||k===3){wrong(r)}
+      else if(k===4){launch(r,true)}
+      else if(k===6){r.air=true;r.big=false;r.vy=-108;r.rot=0;spray(r,4);if(!r.ai)beep('hop')}
+    }
+    function release(r){r.held=false}
+    function wrong(r){
+      r.streak=0;
+      if(r.wob&&!r.ai){crash(r,'crash');return}
+      r.wob=1;r.v=Math.max(VMIN,r.v*0.62);r.wobT=0;
+      if(!r.ai){pop('oops','#E83B3B',r);beep('bad');buzz(60)}
+    }
+    function hitHurdle(r){
+      r.streak=0;spray(r,10);
+      if(r.wob&&!r.ai){crash(r,'hurdle');return}
+      r.wob=1;r.wobT=0;r.v=Math.max(VMIN,r.v*0.45);
+      if(!r.ai){pop('ouch','#E83B3B',r);beep('bad');buzz(80)}
+    }
+    function checkHurdles(r){
+      const key='hit'+(r===A?1:0);
+      while(r.hi<hurdles.length&&hurdles[r.hi].x+hurdles[r.hi].w<r.x-2){
+        if(!hurdles[r.hi][key]&&!r.crashed){r.v+=14;if(!r.ai){pop('good','#5CC8EA',r);beep('good')}}
+        r.hi++}
+      const h=hurdles[r.hi];
+      if(h&&!h[key]&&r.x>=h.x+1&&r.x<=h.x+h.w-1&&r.y>TY(h.x+h.w/2)-h.h+1){h[key]=1;hitHurdle(r)}
+    }
+    function crash(r,why){
+      if(r.crashed)return;r.crashed=true;r.crashT=0;r.crashWhy=why;r.spin=false;
+      if(!r.ai){beep('crash');buzz([80,40,120]);spray(r,16)}
+    }
+    function land(r){
+      const g=TY(r.x);r.air=false;r.y=g;r.vy=0;
+      const k=-r.rot,n=Math.round(k/360),rem=k-n*360;
+      r.rot=0;r.spin=false;
+      if(Math.abs(rem)>68){if(r.ai){r.v*=0.6}else{crash(r,'land');return}}
+      r.wob=0;
+      if(n>0){r.v+=26*n;r.flips+=n;if(!r.ai){pop(n>=3?'flip3':n===2?'flip2':'flip','#FFD23F',r);beep('flip')}}
+      spray(r,6);
+    }
+    function updRider(r,dt){
+      r.holdT+=dt;if(r.push>0)r.push-=dt;r.wobT+=dt;
+      if(r.crashed){
+        r.crashT+=dt;r.v=Math.max(0,r.v-140*dt);
+        if(r.air){r.x+=r.v*dt;r.vy+=G*dt;r.y+=r.vy*dt;if(r.y>=TY(r.x)){r.air=false}}
+        else{r.x+=r.v*dt;r.y=TY(r.x)}
+        r.rot-=r.v*4*dt;
+        return;
+      }
+      if(!r.air){
+        const s=slopeAt(r.x);
+        const kk=kindAt(r.x);r.v+=(kk===3||kk===4?25:80)*(s-SLOPE)*dt;
+        r.v-=(0.0025*r.v*r.v+4)*dt;
+        r.v=Math.min(Math.max(r.v,VMIN),r.wob?125:198);
+        const nx=r.x+r.v*dt;
+        while(r.ramp<ramps.length&&ramps[r.ramp].lip<r.x)r.ramp++;
+        const rp=ramps[r.ramp];
+        if(rp&&r.x<rp.lip&&nx>=rp.lip){r.x=rp.lip;r.y=TY(rp.lip-0.5);launch(r,false);r.x=nx;return}
+        r.x=nx;r.y=TY(r.x);
+        r.ang+=(Math.atan(s)-r.ang)*Math.min(1,dt*14);
+      }else{
+        r.x+=r.v*dt;r.vy+=G*dt;r.y+=r.vy*dt;
+        r.spin=r.big&&r.held&&r.holdT>0.12;
+        if(r.spin)r.rot-=SPIN*dt;
+        else{const k=-r.rot,n=Math.floor((k+240)/360),tgt=-n*360,d=tgt-r.rot,st=SPIN*1.25*dt;r.rot+=Math.abs(d)<=st?d:Math.sign(d)*st}
+        r.ang+=(Math.atan2(r.vy,r.v)*0.55-r.ang)*Math.min(1,dt*6);
+        if(r.vy>0&&r.y>=TY(r.x))land(r);
+      }
+      if(!r.crashed)checkHurdles(r);
+      if(!r.fin&&r.x>=finishX){r.fin=true;r.finT=raceT}
+    }
+
+    // Computer: gets a little better every level
+    function aiSkill(lv){const l=lv-1;
+      return{ph:Math.min(0.95,0.8+0.02*l),boost:l<3?0.8+0.08*l:Math.min(1.3,1+0.02*l),p:l<3?0.4+0.09*l:Math.min(0.9,0.62+0.03*l),q:Math.min(0.65,0.2+0.035*l),w:Math.max(0.03,0.1-0.008*l),pj:Math.min(0.92,0.62+0.04*l),pf:Math.min(0.6,0.2+0.05*l)}}
+    let SK=aiSkill(1);
+    function aiThink(a){
+      if(a.crashed||a.fin)return;
+      const i=Math.floor(a.x),id=i>=0&&i<LEN?MID[i]:-1;
+      if(id>=0&&(!a.plan||a.plan.id!==id)){
+        const m=mogs[id],roll=Math.random();let at=null;
+        if(roll<SK.p)at=m.x0+m.P*(Math.random()<SK.q?0.07+Math.random()*0.15:0.26+Math.random()*0.17);
+        else if(roll<SK.p+SK.w)at=m.x0+m.P*(0.6+Math.random()*0.3);
+        a.plan={id,at,done:false};
+      }
+      if(a.plan&&!a.plan.done&&a.plan.at!=null&&a.x>=a.plan.at&&!a.air){a.plan.done=true;press(a);release(a)}
+      const rp=ramps[a.ramp];
+      if(rp&&!a.air&&a.x>=rp.x0-30&&(!a.rplan||a.rplan.lip!==rp.lip)){
+        const j=Math.random()<SK.pj;a.rplan={lip:rp.lip,at:j?rp.x0+rp.L*(0.55+Math.random()*0.4):null,flips:j&&Math.random()<SK.pf?Math.min(rp.sz>=2?3:rp.sz>=1.4?2:1,1+(Math.random()<0.45?1:0)+(Math.random()<0.25?1:0)):0,done:false};
+      }
+      if(a.rplan&&!a.rplan.done&&a.rplan.at!=null&&a.x>=a.rplan.at&&!a.air){a.rplan.done=true;press(a);if(!a.rplan.flips)release(a)}
+      const h=hurdles[a.hi];
+      if(h&&!a.air&&a.hplan!==a.hi&&kindAt(a.x)===6&&h.x+h.w/2-a.x<a.v*(0.27+Math.random()*0.08)){a.hplan=a.hi;if(Math.random()<SK.ph){press(a);release(a)}}
+      if(a.air&&a.held&&a.rplan&&(-a.rot)>=a.rplan.flips*360-150)release(a);
+      if(!a.air&&a.held&&!(a.rplan&&a.rplan.done&&a.rplan.flips))release(a);
+    }
+
+    // --- Effects & sound ---
+    let parts=[],pops=[];
+    function spray(r,n){for(let i=0;i<n;i++)parts.push({x:r.x-3+Math.random()*4,y:r.y-1,vx:-r.v*(0.2+Math.random()*0.4),vy:-30-Math.random()*50,t:0.5+Math.random()*0.3,who:r})}
+    function pop(key,col,r){pops.push({key,col,x:r.x,y:r.y-22,t:0})}
+    function buzz(p){try{navigator.vibrate&&navigator.vibrate(p)}catch(_){}}
+    let AC=null;
+    function initAudio(){
+      if(!AC){try{AC=new(window.AudioContext||window.webkitAudioContext)()}catch(_){}}
+      if(AC&&AC.state==='suspended')AC.resume();
+    }
+    function beep(kind){
+      if(!AC)return;const t=AC.currentTime,o=AC.createOscillator(),g=AC.createGain();o.connect(g);g.connect(AC.destination);
+      const S={good:[660,880,.08,'square'],super:[880,1320,.1,'square'],bad:[220,140,.18,'sawtooth'],jump:[440,990,.16,'square'],flip:[660,1760,.22,'triangle'],crash:[180,60,.35,'sawtooth'],hop:[520,780,.1,'square'],win:[523,1046,.4,'square'],tick:[440,440,.08,'square'],go:[880,880,.18,'square']}[kind];
+      o.type=S[3];o.frequency.setValueAtTime(S[0],t);o.frequency.exponentialRampToValueAtTime(S[1],t+S[2]);
+      g.gain.setValueAtTime(0.06,t);g.gain.exponentialRampToValueAtTime(0.0001,t+S[2]+0.05);o.start(t);o.stop(t+S[2]+0.06);
+    }
+
+    // =====================================================================
+    // Pixel sprites (same skier as the original; your colours carry over)
+    // =====================================================================
+    const SKIER=[
+    "................",".........KKK....","........KHHHK...",".L......KHHGGK..",".LL......KSSK...",
+    ".L.LLL.KJJJK....","......LKJJJJK...",".....KJJJJJJK...",".....KJJJJKLSK..","....KPPPPPK.....",
+    ".....KPPPPPK....","......KKPPPK....",".......KPPK.....","......KBBBBK...W","..WWWWWWWWWWWWW.",".VVVVVVVVVVVVVV."];
+    function shade(hex,f){const n=parseInt(hex.slice(1),16);return'#'+[16,8,0].map(b=>Math.round(((n>>b)&255)*f).toString(16).padStart(2,'0')).join('')}
+    function sprite(rows,pal){if(pal.W&&!pal.V)pal=Object.assign({},pal,{V:shade(pal.W,0.72)});const c=document.createElement('canvas');c.width=rows[0].length;c.height=rows.length;const g=c.getContext('2d');
+      rows.forEach((r,y)=>[...r].forEach((ch,x)=>{if(pal[ch]){g.fillStyle=pal[ch];g.fillRect(x,y,1,1)}}));return c}
+    const OUTFIT={
+      g:['#FFD23F','#FF8C1A','#E83B3B','#6CC24A','#FF6FB5','#2F7FE0','#8B4FD8','#3A3F5C'],
+      j:['#E83B3B','#FF9A2E','#FFD23F','#3FAE5A','#8B4FD8','#FF6FB5','#2F7FE0'],
+      p:['#2B4C9B','#3A3F5C','#C0392B','#2E7D4F','#8A93A8','#7A4A22','#F4F4F4'],
+      s:['#FCDCC4','#F2B58C','#E3A672','#C68642','#8D5524','#5C3A21']};
+    const look={g:0,j:0,p:0,s:1};
+    try{const s=JSON.parse(localStorage.getItem('skiing.char')||'null');if(s)for(const k in look)if(OUTFIT[k][s[k]]!=null)look[k]=s[k]}catch(_){}
+    const ME_COL=OUTFIT.j[look.j];
+    const SPR_ME=sprite(SKIER,{K:'#1B1F3B',H:OUTFIT.g[look.g],G:'#38D1E0',S:OUTFIT.s[look.s],J:ME_COL,P:OUTFIT.p[look.p],B:'#3A3F5C',L:OUTFIT.g[look.g],W:OUTFIT.g[look.g]});
+    const SPR_AI=sprite(SKIER,{K:'#6F7FA8',H:'#FFFFFF',G:'#BFEFF5',S:'#F8D9C4',J:'#9CCFF6',P:'#B3B0EA',B:'#8E97B8',L:'#D0D6E2',W:'#B8E59E'});
+    const SPR_COW=sprite(["..H...........",".KKK.KKKKKKKK.","KWWWKWWBBWWWWK","KWKWKWBBBWWBWK","KWWWWWWBWWWBBK","KPPKWWWWWWWBBK",".KKKWWWWWWWWWK","....KWKKKKKWKK","....KWK...KWK.","....KKK...KKK."],{K:'#1B1F3B',W:'#FFFFFF',B:'#2A2A33',P:'#F4A6B8',H:'#F2E6C9'});
+    const SPR_GOAT=sprite(["..HH......",".KHHK.....",".KGGK.KKK.","KGKGGKGGGK","KGGGGGGGGK",".KDKGGGGGK","..D.KGKKGK","....KG.KG.","....KK.KK."],{K:'#1B1F3B',G:'#B89B7A',D:'#8C7358',H:'#E8DCC0'});
+    const SPR_YETI=sprite(["KK..KKK..KK","KYKKYYYKKYK",".KYYFFFYYK.","..KFKFKFK..","..KFFFFFK..","..KYRRRYK..",".KYYYYYYYK.","KYYYyYyYYYK","KYKYYYYYKYK",".K.KYyYK.K.","...KYYYK...","..KYYKYYK..","..KYK.KYK..",".KKKK.KKKK."],{K:'#1B1F3B',Y:'#CFE3F7',y:'#9FBBD8',F:'#8FA8C8',R:'#5A1F3B'});
+
+    // =====================================================================
+    // Drawing: just the line, the riders and a few pixel props
+    // =====================================================================
+    function mkLayer(){
+      const c=document.createElement('canvas');c.width=CW;c.height=CH;
+      const g=c.getContext('2d');g.imageSmoothingEnabled=false;
+      const t=new THREE.CanvasTexture(c);
+      t.magFilter=THREE.NearestFilter;t.minFilter=THREE.NearestFilter;t.generateMipmaps=false;t.colorSpace=THREE.SRGBColorSpace;
+      return{c,g,t};
+    }
+    const FR=mkLayer(), BK=mkLayer();
+    let camX=0,camY=0,clock=0;
+    const FONT='"Press Start 2P", ui-monospace, monospace';
+    function R(g,c,x,y,w,h){g.fillStyle=c;g.fillRect(Math.round(x),Math.round(y),w|0,h|0)}
+    function txt(g,s,x,y,col,size){
+      size=size||8;g.font=`${size}px ${FONT}`;g.textAlign='center';g.textBaseline='middle';
+      x=Math.round(x);y=Math.round(y);
+      g.fillStyle='#1B1F3B';for(const[dx,dy]of[[1,1],[-1,0],[1,0],[0,-1],[0,1]])g.fillText(s,x+dx,y+dy);
+      g.fillStyle=col;g.fillText(s,x,y);
+    }
+    // The slope as one pixel line. Front: yellow where a tap speeds you up, orange where a tap jumps.
+    function drawLine(g,front){
+      let prev=null;const th=front?2:1;
+      for(let i=0;i<CW;i++){
+        const wx=camX+i,ty=Math.round(TY(wx)-camY),k=kindAt(wx);
+        const col=front?(k===1?'#FFD23F':k===4?'#FF9A2E':'#FFFFFF'):'#8EC3EE';
+        let top=ty,h=th;
+        if(prev!=null&&Math.abs(ty-prev)>1){top=Math.min(ty,prev);h=Math.abs(ty-prev)+th}
+        prev=ty;
+        if(top+h<0||top>=CH)continue;
+        R(g,col,i,top,1,h);
+      }
+    }
+    function drawHurdle(g,h){
+      const sx=Math.round(h.x-camX);if(sx<-20||sx>CW+20)return;const gy=Math.round(TY(h.x+h.w/2)-camY),t=gy-h.h;
+      const K='#1B1F3B';
+      if(h.type==='fence'){R(g,K,sx,t,2,h.h);R(g,K,sx+h.w-2,t,2,h.h);R(g,'#A0652F',sx,t+1,h.w,2);R(g,'#A0652F',sx,t+5,h.w,2)}
+      else if(h.type==='snowman'){R(g,'#FFFFFF',sx+1,t+7,6,5);R(g,'#FFFFFF',sx+2,t+3,4,4);R(g,K,sx+2,t-1,4,3);R(g,'#FF8C1A',sx+6,t+4,2,1);R(g,'#E83B3B',sx+1,t+6,6,1)}
+      else if(h.type==='logs'){for(const[dx,dy]of[[0,3],[6,3],[3,0]]){R(g,'#A0652F',sx+dx,t+dy,6,4);R(g,'#E0B07A',sx+dx+2,t+dy+1,2,2)}}
+      else if(h.type==='cow')g.drawImage(SPR_COW,sx,t);
+      else if(h.type==='goat')g.drawImage(SPR_GOAT,sx,t);
+      else if(h.type==='yeti')g.drawImage(SPR_YETI,sx,t);
+      else{R(g,'#FFFFFF',sx+1,t+3,1,h.h-3);R(g,'#FFFFFF',sx+h.w-2,t+3,1,h.h-3);for(let i=0;i<h.w;i++)R(g,(i>>1)%2?'#FFFFFF':'#E83B3B',sx+i,t,1,3)}
+    }
+    function drawProps(g,front){
+      if(!front){g.save();g.globalAlpha=0.5;hurdles.forEach(h=>drawHurdle(g,h));g.restore();return}
+      hurdles.forEach(h=>drawHurdle(g,h));
+      // ramp edge: little red/white pole
+      ramps.forEach(rp=>{const sx=Math.round(rp.lip-camX);if(sx<-4||sx>CW+4)return;const y=Math.round(TY(rp.lip-1)-camY);
+        const ph=Math.round(8*rp.sz);for(let j=0;j<ph;j++)R(g,j%4<2?'#E83B3B':'#FFFFFF',sx,y-ph+j,1,1)});
+      // finish: two poles and a checkered banner
+      const sx=Math.round(finishX-camX);
+      if(sx>-40&&sx<CW+40){
+        const g0=Math.round(TY(finishX)-camY),g1=Math.round(TY(finishX+20)-camY),ph=22,by=Math.min(g0,g1)-ph-3;
+        R(g,'#FFFFFF',sx,g0-ph,1,ph);R(g,'#FFFFFF',sx+20,g1-ph,1,ph);
+        for(let i=0;i<22;i++)for(let j=0;j<4;j++)R(g,((i>>1)+(j>>1))%2?'#FFFFFF':'#1B1F3B',sx-1+i,by+j,1,1);
+        txt(g,T.finish,sx+10,by-7,'#FFD23F',8);
+      }
+    }
+    function drawRider(g,r,spr){
+      const sx=r.x-camX,sy=r.y-camY;if(sx<-20||sx>CW+20)return;
+      if(r.air){const gy=Math.round(TY(r.x)-camY);R(g,r.ai?'#6F8FB8':'#A9C6E0',sx-4,gy+2,8,1)}
+      let ang=r.ang,rot=r.rot*Math.PI/180;
+      if(r.wob&&!r.crashed&&!r.air)ang+=Math.sin(r.wobT*22)*0.16;
+      if(r.crashed&&!r.ai)rot=Math.min(1,r.crashT*3)*1.6+(r.air?r.rot*Math.PI/180:0);
+      g.save();g.translate(Math.round(sx),Math.round(sy)+(r.push>0?1:0));g.rotate(ang);g.translate(0,-7);g.rotate(rot);
+      g.drawImage(spr,-8,-8);g.restore();
+    }
+    function drawParts(g,who){parts.forEach(p=>{if(p.who===who)R(g,who===P?'#FFFFFF':'#BFE0FA',p.x-camX,p.y-camY,1,1)})}
+    function drawHud(g){
+      // progress line with both skiers
+      const x0=30,x1=CW-30,f=x=>x0+Math.round(Math.max(0,Math.min(1,(x-40)/(finishX-40)))*(x1-x0));
+      R(g,'#FFFFFF',x0,4,x1-x0,1);R(g,'#FFFFFF',x1,2,1,5);
+      R(g,'#A9D4F5',f(A.x)-1,3,3,3);R(g,ME_COL,f(P.x)-1,2,3,5);
+      txt(g,raceT.toFixed(1),CW-14,5,'#FFFFFF',8);
+      txt(g,'L'+level,12,5,'#FFFFFF',8);
+      if(P.wob&&!P.crashed&&Math.floor(clock*5)%2)txt(g,T.wob,CW/2,16,'#E83B3B',8);
+      // CPU off-screen: arrow with distance
+      const sx=A.x-camX;
+      if(sx<-6||sx>CW+6){
+        const right=sx>CW,d=Math.round(Math.abs(A.x-P.x)/10)+'m',y=Math.max(24,Math.min(CH-14,Math.round(TY(Math.max(camX,Math.min(camX+CW,A.x)))-camY)-16));
+        const x=right?CW-18:18;txt(g,T.cpu,x,y-5,'#A9D4F5',8);txt(g,(right?'+':'-')+d,x,y+5,'#FFFFFF',8);
+      }
+    }
+    function drawPops(g){pops.forEach(p=>txt(g,T[p.key],p.x-camX,p.y-camY-p.t*16,p.col,8))}
+    function panel(g,lines){
+      // dark box behind text (invisible on see-through glasses, readable on a phone)
+      const h=lines.reduce((s,l)=>s+(l[2]||8)+4,6);let y=Math.round((CH-h)/2);
+      g.fillStyle='rgba(27,31,59,0.55)';g.fillRect(8,y,CW-16,h);y+=5;
+      lines.forEach(([s,col,size])=>{size=size||8;const fit=Math.min(size,Math.floor((CW-20)/Math.max(1,s.length)));txt(g,s,CW/2,y+size/2,col,fit);y+=size+4});
+    }
+    const sub=s=>s.replace('$',inputWord());
+
+    function render(){
+      for(const L of[FR,BK])L.g.clearRect(0,0,CW,CH);
+      if(TY_){
+        drawLine(BK.g,false);drawProps(BK.g,false);drawRider(BK.g,A,SPR_AI);drawParts(BK.g,A);
+        drawLine(FR.g,true);drawProps(FR.g,true);
+        if(state!=='menu'&&state!=='place')drawRider(FR.g,P,SPR_ME);
+        drawParts(FR.g,P);drawPops(FR.g);
+      }
+      const g=FR.g;
+      if(state==='run'||state==='ending'||state==='count')drawHud(g);
+      if(state==='count')txt(g,count>0?String(Math.ceil(count)):T.goT,CW/2,CH/2-14,'#FFD23F',24);
+      if(state==='run'&&raceT<0.6)txt(g,T.goT,CW/2,CH/2-14,'#FFD23F',24);
+      if(state==='menu'){
+        const blink=Math.floor(clock*2.5)%2?'#FFD23F':'#FFFFFF';
+        const L=[[T.title,'#FFD23F',16],[T.lvl+' '+level,'#FFFFFF'],[sub(T.yellow),'#FFD23F'],[T.orange,'#FF9A2E'],[T.hold,'#FFFFFF'],[sub(T.go),blink]];
+        if(inAR)L.push([T.move,'#A9D4F5']);
+        panel(g,L);
+      }
+      if(state==='end'){
+        const win=endWhy==='win',blink=Math.floor(clock*2.5)%2?'#FFD23F':'#FFFFFF';
+        const L=[[T[endWhy],win?'#FFD23F':'#E83B3B',16]];
+        if(P.fin)L.push([`${T.time} ${P.finT.toFixed(1)}s`,'#FFFFFF']);
+        L.push([`${T.flips} ${P.flips}`,'#FFFFFF'],[sub(win?T.next:T.retry),blink]);
+        if(inAR)L.push([T.move,'#A9D4F5']);
+        panel(g,L);
+      }
+      FR.t.needsUpdate=true;BK.t.needsUpdate=true;
+    }
+
+    // =====================================================================
+    // Game flow
+    // =====================================================================
+    let state='menu',count=0,raceT=0,endT=0,endWhy=null;
+    let reached=1;try{reached=Math.max(1,+localStorage.getItem('skiing-ar.reach')||1)}catch(_){}
+    level=reached;build(level);
+    function startRace(){
+      initAudio();
+      build(level);SK=aiSkill(level);
+      P=mkRider(false);A=mkRider(true);P.y=A.y=TY(40);
+      parts=[];pops=[];raceT=0;hurdles.forEach(h=>{h.hit0=h.hit1=0});endWhy=null;
+      camX=P.x-CW*0.3;camY=P.y-CH*0.55;
+      state='count';count=3;beep('tick');
+    }
+    function toMenu(){state='menu';build(level);P=mkRider(false);A=mkRider(true);A.x=-999;parts=[];pops=[]}
+    A.x=-999;
+    function step(dt){
+      aiThink(A);updRider(A,dt);updRider(P,dt);
+      if(state==='run'){
+        raceT+=dt;
+        if(P.crashed){state='ending';endWhy=P.crashWhy;endT=1.5}
+        else if(P.fin){state='ending';endWhy=(A.fin&&A.finT<P.finT)?'slow':'win';endT=1.3}
+        else if(A.fin){state='ending';endWhy='slow';endT=1.0}
+      }
+    }
+    function showEnd(){
+      state='end';endAt=clock;
+      if(endWhy==='win'){beep('win');level++;if(level>reached){reached=level;try{localStorage.setItem('skiing-ar.reach',reached)}catch(_){}}}
+    }
+    function tick(dt){
+      clock+=dt;
+      if(state==='count'){
+        const before=Math.ceil(count);count-=dt;const now=Math.ceil(count);
+        if(now!==before&&now>0)beep('tick');
+        if(count<=0){state='run';beep('go')}
+      }
+      if(state==='run'||state==='ending'){
+        for(let i=0;i<2;i++)step(dt/2);
+        if(state==='ending'){endT-=dt;if(endT<=0)showEnd()}
+      }
+      parts=parts.filter(p=>(p.t-=dt)>0);parts.forEach(p=>{p.x+=p.vx*dt;p.vy+=200*dt;p.y+=p.vy*dt});
+      pops=pops.filter(p=>(p.t+=dt)<0.9);
+      // camera: follow your skier, keep it on the board during big jumps
+      if(state==='menu'||state==='place'){camX+=dt*40;camY=TY(camX+CW*0.3)-CH*0.6}
+      else if(state!=='end'){
+        camX+=(P.x-CW*0.3-camX)*Math.min(1,dt*10);
+        camY+=(P.y-CH*0.6-camY)*Math.min(1,dt*(P.air?3:6));
+        camY=Math.min(P.y-22,Math.max(P.y-(CH-8),camY));
+      }
+    }
+
+    // --- Input: one button. Pinch / screen tap / space. ---
+    let holding=false,holdT=0,swallow=false,downState='',endAt=0;
+    function inputWord(){return handsSeen?T.pinch:T.tap}
+    function down(){
+      if(holding)return;holding=true;holdT=0;downState=state;initAudio();
+      if(state==='place'){placeBoard();swallow=true;return}
+      if(state==='run')press(P);
+    }
+    function up(){
+      if(!holding)return;holding=false;
+      if(swallow){swallow=false;return}
+      if(state==='run'){release(P);return}
+      // start only with a fresh press made on this screen (not one left over from the race)
+      if((state==='menu'||state==='end')&&downState===state&&clock-endAt>0.5)startRace();
+    }
+    function holdTick(dt){
+      if(!holding)return;holdT+=dt;
+      if(inAR&&holdT>1.2&&(state==='menu'||state==='end')){swallow=true;toMenu();startPlacing()}
+    }
+
+    // =====================================================================
+    // three.js scene
+    // =====================================================================
+    const scene=new THREE.Scene();
+    const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.01,20);
+    const renderer=new THREE.WebGLRenderer({antialias:false,alpha:true,powerPreference:'high-performance'});
+    renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+    renderer.setSize(innerWidth,innerHeight);
+    renderer.xr.enabled=true;
+    renderer.xr.setReferenceSpaceType('local');
+    renderer.xr.setFoveation(1);
+    renderer.xr.setFramebufferScaleFactor(0.65); // same as the other experiments: smooth on Spectacles
+    document.body.appendChild(renderer.domElement);
+
+    // The board: two transparent planes, nothing else
+    const board=new THREE.Group();
+    function layer(L,z,order){
+      const m=new THREE.Mesh(new THREE.PlaneGeometry(BW,BH),new THREE.MeshBasicMaterial({map:L.t,transparent:true,depthWrite:false}));
+      m.position.z=z;m.renderOrder=order;board.add(m);
+    }
+    layer(BK,GAP,1);layer(FR,GAP+DEPTH,2);
+    scene.add(board);
+
+    // Placement frame: outline of the board on the wall
+    const frameMat=new THREE.LineBasicMaterial({color:0xffffff});
+    const reticle=new THREE.Group();
+    {
+      const w=BW/2,h=BH/2,c=0.06,pts=[];
+      for(const[sx,sy]of[[-1,-1],[1,-1],[1,1],[-1,1]]){
+        pts.push(sx*w,sy*h,0, sx*(w-c),sy*h,0, sx*w,sy*h,0, sx*w,sy*(h-c),0);
+      }
+      pts.push(-0.02,0,0,0.02,0,0,0,-0.02,0,0,0.02,0);
+      const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(pts,3));
+      reticle.add(new THREE.LineSegments(geo,frameMat));
+      // the slope line preview, so you see what lands there
+      const lp=[];for(let i=0;i<=24;i++){const x=-w+i*BW/24;lp.push(x,0.08-i*0.0065+0.012*Math.sin(i*1.3),0)}
+      const lg=new THREE.BufferGeometry();lg.setAttribute('position',new THREE.Float32BufferAttribute(lp,3));
+      reticle.add(new THREE.Line(lg,new THREE.LineBasicMaterial({color:0xffd23f})));
+    }
+    reticle.visible=false;scene.add(reticle);
+
+    // Floating hint label (DOM text isn't visible on glasses)
+    const LABEL_FONT='600 52px system-ui, sans-serif';
+    const labelCache={};
+    function labelTex(text){
+      if(labelCache[text])return labelCache[text];
+      const c=document.createElement('canvas'),g=c.getContext('2d');g.font=LABEL_FONT;
+      const h=128,pad=56;c.width=Math.ceil(g.measureText(text).width)+pad*2;c.height=h;g.font=LABEL_FONT;
+      g.fillStyle='rgba(0,0,0,0.55)';g.beginPath();g.roundRect(4,4,c.width-8,h-8,(h-8)/2);g.fill();
+      g.fillStyle='#fff';g.textAlign='center';g.textBaseline='middle';g.fillText(text,c.width/2,h/2+2);
+      const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;t.userData.aspect=c.width/h;
+      return labelCache[text]=t;
+    }
+    const label=new THREE.Sprite(new THREE.SpriteMaterial({depthTest:false,transparent:true}));
+    label.renderOrder=10;label.visible=false;scene.add(label);
+    function setLabel(text){const t=labelTex(text);if(label.material.map===t)return;label.material.map=t;label.material.needsUpdate=true;label.scale.set(0.045*t.userData.aspect,0.045,1)}
+
+    // FPS counter, floating below the centre of view
+    const fpsCanvas=document.createElement('canvas');fpsCanvas.width=256;fpsCanvas.height=64;
+    const fpsCtx=fpsCanvas.getContext('2d'),fpsTex=new THREE.CanvasTexture(fpsCanvas);fpsTex.colorSpace=THREE.SRGBColorSpace;
+    const fpsSprite=new THREE.Sprite(new THREE.SpriteMaterial({map:fpsTex,depthTest:false,transparent:true}));
+    fpsSprite.scale.set(0.08,0.02,1);fpsSprite.position.set(0,-0.12,-0.6);fpsSprite.renderOrder=20;fpsSprite.visible=false;
+    camera.add(fpsSprite);scene.add(camera);
+    let fpsFrames=0,fpsLast=performance.now();
+    function updateFps(now){
+      fpsFrames++;if(now-fpsLast<1000)return;
+      const fps=Math.round(fpsFrames*1000/(now-fpsLast));fpsFrames=0;fpsLast=now;
+      fpsCtx.clearRect(0,0,256,64);fpsCtx.fillStyle='rgba(0,0,0,0.5)';fpsCtx.fillRect(0,0,256,64);
+      fpsCtx.fillStyle=fps>=50?'#9f9':fps>=30?'#ff9':'#f88';fpsCtx.font='600 40px ui-monospace, monospace';
+      fpsCtx.textAlign='center';fpsCtx.textBaseline='middle';fpsCtx.fillText(fps+' fps',128,34);fpsTex.needsUpdate=true;
+    }
+
+    // --- Non-AR preview: board in front of the camera, a bit from the side to show the depth ---
+    function framePreview(){
+      board.position.set(0,0,0);board.quaternion.identity();board.visible=true;
+      const tan=Math.tan(THREE.MathUtils.degToRad(camera.fov/2));
+      const d=Math.max(BH/(2*tan),BW/(2*tan*camera.aspect))*1.25+DEPTH;
+      camera.position.set(d*0.22,d*0.08,d);camera.lookAt(0,0,DEPTH/2);
+    }
+    framePreview();
+
+    // =====================================================================
+    // AR: find a wall, place the board, play
+    // =====================================================================
+    let inAR=false,handsSeen=false;
+    let hitTestSource=null,hitTestRequested=false,placing=false;
+    const UP=new THREE.Vector3(0,1,0);
+    const tgtPos=new THREE.Vector3(),tgtQuat=new THREE.Quaternion();
+    const hp=new THREE.Vector3(),hq=new THREE.Quaternion(),hs=new THREE.Vector3(),nrm=new THREE.Vector3(),xAx=new THREE.Vector3(),m4=new THREE.Matrix4();
+    const camPos=new THREE.Vector3(),camQuat=new THREE.Quaternion(),fwd=new THREE.Vector3();
+    let onWall=false,reticleFresh=true;
+
+    // Board orientation: upright, facing the viewer. On a wall it lies flat on the wall.
+    function orient(n){xAx.crossVectors(UP,n).normalize();m4.makeBasis(xAx,UP,n);tgtQuat.setFromRotationMatrix(m4)}
+    function targetFromHit(matrix){
+      m4.fromArray(matrix);m4.decompose(hp,hq,hs);
+      nrm.set(0,1,0).applyQuaternion(hq);
+      if(Math.abs(nrm.y)<0.5){ // vertical surface = wall
+        nrm.y=0;nrm.normalize();
+        if(nrm.dot(fwd.subVectors(camPos,hp))<0)nrm.negate();
+        tgtPos.copy(hp);orient(nrm);return true;
+      }
+      // floor or table: stand the board up on it, facing you
+      nrm.subVectors(camPos,hp);nrm.y=0;if(nrm.lengthSq()<1e-6)nrm.set(0,0,1);nrm.normalize();
+      tgtPos.copy(hp).addScaledVector(UP,BH/2+0.02);orient(nrm);return false;
+    }
+    function targetFloating(){
+      fwd.set(0,0,-1).applyQuaternion(camQuat);fwd.y=0;if(fwd.lengthSq()<1e-6)fwd.set(0,0,-1);fwd.normalize();
+      tgtPos.copy(camPos).addScaledVector(fwd,1.3);tgtPos.y-=0.1;
+      orient(nrm.copy(fwd).negate());
+    }
+    function startPlacing(){
+      state='place';placing=true;board.visible=false;reticle.visible=true;reticleFresh=true;
+      hitTestRequested=false;
+    }
+    function placeBoard(){
+      board.position.copy(reticle.position);board.quaternion.copy(reticle.quaternion);board.visible=true;
+      reticle.visible=false;label.visible=false;placing=false;
+      if(hitTestSource){hitTestSource.cancel();hitTestSource=null} // no more surface detection while playing
+      toMenu();beep('tick');
+    }
+    async function requestHitTest(session){
+      const space=await session.requestReferenceSpace('viewer');
+      try{return await session.requestHitTestSource({space,entityTypes:['plane']})}
+      catch(e){return await session.requestHitTestSource({space})}
+    }
+    function updatePlacing(frame){
+      const session=renderer.xr.getSession(),ref=renderer.xr.getReferenceSpace();
+      if(!hitTestRequested){
+        hitTestRequested=true;
+        requestHitTest(session).then(s=>{if(placing)hitTestSource=s;else s.cancel()}).catch(()=>{});
+      }
+      const cam=renderer.xr.getCamera();cam.getWorldPosition(camPos);cam.getWorldQuaternion(camQuat);
+      let hit=false;
+      if(hitTestSource){
+        const hits=frame.getHitTestResults(hitTestSource);
+        if(hits.length){const pose=hits[0].getPose(ref);if(pose){onWall=targetFromHit(pose.transform.matrix);hit=true}}
+      }
+      if(!hit){onWall=false;targetFloating()}
+      if(reticleFresh){reticle.position.copy(tgtPos);reticle.quaternion.copy(tgtQuat);reticleFresh=false}
+      else{reticle.position.lerp(tgtPos,0.25);reticle.quaternion.slerp(tgtQuat,0.25)}
+      frameMat.color.set(onWall?0x7CFF9A:0xffffff);
+      label.visible=true;label.position.copy(reticle.position).addScaledVector(UP,BH/2+0.06);
+      setLabel((onWall?T.placeWall:T.place).replace('$',handsSeen?T.pinchL:T.tapL));
+    }
+
+    // --- Hands: pinch = press, open = release ---
+    const PINCH_ON=0.015,PINCH_OFF=0.03;
+    const hands=[0,1].map(i=>{
+      const hand=renderer.xr.getHand(i);scene.add(hand);
+      const dot=new THREE.Mesh(new THREE.SphereGeometry(0.006,10,6),new THREE.MeshBasicMaterial({color:0xffffff}));
+      dot.visible=false;scene.add(dot);
+      return{hand,dot,pinching:false};
+    });
+    const tip=new THREE.Vector3(),thumb=new THREE.Vector3();
+    let pinchCount=0;
+    function updateHands(){
+      for(const h of hands){
+        const it=h.hand.joints['index-finger-tip'],tt=h.hand.joints['thumb-tip'];
+        if(!it||!tt||!it.visible||!tt.visible){h.dot.visible=false;if(h.pinching){h.pinching=false;if(--pinchCount===0)up()}continue}
+        handsSeen=true;
+        it.getWorldPosition(tip);tt.getWorldPosition(thumb);
+        const d=tip.distanceTo(thumb);
+        h.dot.position.copy(tip).add(thumb).multiplyScalar(0.5);h.dot.visible=true;
+        h.dot.material.color.set(d<PINCH_OFF?0xffd23f:0xffffff);
+        if(!h.pinching&&d<PINCH_ON){h.pinching=true;if(pinchCount++===0)down()}
+        else if(h.pinching&&d>PINCH_OFF){h.pinching=false;if(--pinchCount===0)up()}
+      }
+    }
+    // --- Screen tap / controller (hands are handled above) ---
+    for(let i=0;i<2;i++){
+      const c=renderer.xr.getController(i);
+      c.addEventListener('selectstart',e=>{if(e.data&&e.data.hand)return;down()});
+      c.addEventListener('selectend',e=>{if(e.data&&e.data.hand)return;up()});
+      scene.add(c);
+    }
+    // --- Preview controls: tap / click / space ---
+    renderer.domElement.addEventListener('pointerdown',e=>{if(!inAR){e.preventDefault();down()}});
+    addEventListener('pointerup',()=>{if(!inAR)up()});
+    addEventListener('pointercancel',()=>{if(!inAR)up()});
+    addEventListener('keydown',e=>{if(!inAR&&!e.repeat&&(e.code==='Space'||e.code==='Enter'||e.code==='ArrowDown')){e.preventDefault();down()}});
+    addEventListener('keyup',e=>{if(!inAR&&(e.code==='Space'||e.code==='Enter'||e.code==='ArrowDown'))up()});
+    addEventListener('click',initAudio,{capture:true});
+
+    // --- AR button ---
+    if(navigator.xr&&await navigator.xr.isSessionSupported('immersive-ar').catch(()=>false))info.innerHTML=T.ok;
+    else info.innerHTML=T.noAr;
+    document.getElementById('bar').appendChild(ARButton.createButton(renderer,{
+      optionalFeatures:['hit-test','hand-tracking','dom-overlay'],
+      domOverlay:{root:document.body}
+    }));
+
+    renderer.xr.addEventListener('sessionstart',()=>{
+      inAR=true;document.body.classList.add('ar');info.textContent=T.inAr;
+      holding=false;swallow=false;pinchCount=0;
+      startPlacing();
+    });
+    renderer.xr.addEventListener('sessionend',()=>{
+      inAR=false;placing=false;document.body.classList.remove('ar');
+      reticle.visible=false;label.visible=false;
+      if(hitTestSource){try{hitTestSource.cancel()}catch(_){}hitTestSource=null}
+      holding=false;swallow=false;
+      toMenu();framePreview();info.innerHTML=T.ok;
+    });
+
+    let last=0;
+    renderer.setAnimationLoop((t,frame)=>{
+      const dt=last?Math.min(0.05,Math.max(0,(t-last)/1000)):0;last=t;
+      fpsSprite.visible=!!frame;
+      if(frame){
+        updateFps(performance.now());
+        updateHands();
+        if(placing)updatePlacing(frame);
+        if(inAR&&state!=='place')info.textContent='';
+      }
+      holdTick(dt);
+      tick(dt);
+      if(board.visible)render();
+      renderer.render(scene,camera);
+    });
+
+    addEventListener('resize',()=>{
+      camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth,innerHeight);
+      if(!inAR)framePreview();
+    });
+    if(document.fonts)document.fonts.load(`8px ${FONT}`).catch(()=>{});
+
+    window.__ski={layers:[FR.c,BK.c],get state(){return state},get P(){return P},get A(){return A},down,up,startRace,get level(){return level}};
+  </script>
+</body>
+</html>
