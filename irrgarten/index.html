@@ -765,7 +765,7 @@ function drawCaters(){
     function drawPanel(){
       const blink=Math.floor(clock*2.5)%2;
       const bn=st&&st.banner;
-      const key=[appState,inAR,handsSeen,diff,startLvl,reached(),blink,st&&st.level,st&&st.score,st?Math.round((st.p||0)*120):0,bn&&bn.text,bn&&Math.round((bn.max-bn.t)*30)].join('|');
+      const key=[fps,appState,inAR,handsSeen,diff,startLvl,reached(),blink,st&&st.level,st&&st.score,st?Math.round((st.p||0)*120):0,bn&&bn.text,bn&&Math.round((bn.max-bn.t)*30)].join('|');
       if(key===panelKey)return;panelKey=key;
       const g=PN.g;g.clearRect(0,0,PW,PH);
       if(appState==='place'){PN.t.needsUpdate=true;return}
@@ -794,8 +794,14 @@ function drawCaters(){
         if(inAR)L.push([T.move,18,'#555']);
         card(g,L,C.pop);
       }
+      // frame rate, bottom right
+      g.font=`22px ${FONT_D}`;const ft=fps+' FPS',fw=g.measureText(ft).width+16;
+      g.fillStyle='rgba(22,18,15,.7)';g.fillRect(PW-fw-6,PH-32,fw,28);
+      g.fillStyle=fps>=50?'#7CFF9A':fps>=30?C.paper:C.pop;g.textAlign='center';g.textBaseline='middle';g.fillText(ft,PW-6-fw/2,PH-17);
       PN.t.needsUpdate=true;
     }
+    let fps=0,fpsN=0,fpsT0=0;
+    function fpsTick(){const now=performance.now();if(!fpsT0)fpsT0=now;fpsN++;if(now-fpsT0>=500){fps=Math.round(fpsN*1000/(now-fpsT0));fpsN=0;fpsT0=now}}
 
     // =====================================================================
     // Game flow
@@ -1065,6 +1071,7 @@ function drawCaters(){
         if(placing)updatePlacing(frame);else headUpdate(dt);
         if(appState!=='place')info.textContent='';
       }
+      fpsTick();
       holdTick(dt);
       tick(dt);
       if(board.visible){render3D(dt);drawPanel()}
