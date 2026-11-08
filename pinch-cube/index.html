@@ -75,23 +75,34 @@
     scene.add(previewCube);
 
     // --- Floating hint (DOM text isn't visible on glasses) ---
+    // Canvas is sized to fit the text, so nothing gets cut off
+    const LABEL_FONT = '600 52px system-ui, sans-serif';
     function makeLabelTexture(text) {
       const c = document.createElement('canvas');
-      c.width = 512; c.height = 128;
       const g = c.getContext('2d');
+      g.font = LABEL_FONT;
+      const h = 128, pad = 56;
+      c.width = Math.ceil(g.measureText(text).width) + pad * 2; c.height = h;
+      g.font = LABEL_FONT; // resizing the canvas resets the context
       g.fillStyle = 'rgba(0,0,0,0.55)';
-      g.beginPath(); g.roundRect(4, 4, 504, 120, 60); g.fill();
+      g.beginPath(); g.roundRect(4, 4, c.width - 8, h - 8, (h - 8) / 2); g.fill();
       g.fillStyle = '#fff';
-      g.font = '600 52px system-ui, sans-serif';
       g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.fillText(text, 256, 66);
+      g.fillText(text, c.width / 2, h / 2 + 2);
       const t = new THREE.CanvasTexture(c);
       t.colorSpace = THREE.SRGBColorSpace;
+      t.userData.aspect = c.width / h;
       return t;
+    }
+    // Keep the sprite's proportions matching its texture (height in metres)
+    function setLabel(sprite, tex, height) {
+      if (sprite.material.map === tex) return;
+      sprite.material.map = tex;
+      sprite.scale.set(height * tex.userData.aspect, height, 1);
     }
     const hintTex = { pinch: makeLabelTexture('Pinch to place cube'), tap: makeLabelTexture('Tap to place cube') };
     const hint = new THREE.Sprite(new THREE.SpriteMaterial({ map: hintTex.tap, depthTest: false, transparent: true }));
-    hint.scale.set(0.3, 0.075, 1);
+    hint.scale.set(0.075 * hintTex.tap.userData.aspect, 0.075, 1);
     hint.renderOrder = 10;
     hint.visible = false;
     scene.add(hint);
@@ -220,7 +231,7 @@
           hint.visible = true;
         }
         const tracked = updateHands();
-        hint.material.map = tracked ? hintTex.pinch : hintTex.tap;
+        setLabel(hint, tracked ? hintTex.pinch : hintTex.tap, 0.075);
       } else {
         previewCube.rotation.y = t / 1000;
         previewCube.rotation.x = t / 2500;
