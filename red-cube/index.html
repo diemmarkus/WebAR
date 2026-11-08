@@ -12,6 +12,9 @@
       background: linear-gradient(#000a, #0000); pointer-events: none; z-index: 2;
     }
     #info b { color: #ff8a80; }
+    body.ar { background: transparent; }
+    #debug { position: absolute; left: 8px; bottom: 8px; z-index: 3; font: 11px/1.3 ui-monospace, monospace; color: #fffc; background: #0008; padding: 4px 6px; border-radius: 4px; display: none; pointer-events: none; }
+    body.ar #debug { display: block; }
     #back { position: absolute; bottom: 72px; left: 50%; transform: translateX(-50%); z-index: 3; color: #fff; opacity: .7; font-size: 14px; text-decoration: none; }
   </style>
   <script type="importmap">
@@ -26,6 +29,7 @@
 <body>
   <a id="back" href="../">← Experiments</a>
   <div id="info">Checking for WebXR AR support…</div>
+  <div id="debug"></div>
 
   <script type="module">
     import * as THREE from 'three';
@@ -42,6 +46,7 @@
     renderer.setPixelRatio(devicePixelRatio);
     renderer.setSize(innerWidth, innerHeight);
     renderer.xr.enabled = true;
+    renderer.xr.setReferenceSpaceType('local');
     document.body.appendChild(renderer.domElement);
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 2.5));
@@ -73,10 +78,16 @@
     // --- Tap to place a cube where the reticle is ---
     const controller = renderer.xr.getController(0);
     controller.addEventListener('select', () => {
-      if (!reticle.visible) return;
       const cube = makeCube();
-      reticle.matrix.decompose(cube.position, cube.quaternion, cube.scale);
+      if (reticle.visible) {
+        reticle.matrix.decompose(cube.position, cube.quaternion, cube.scale);
+      } else {
+        // No surface yet: drop the cube 50 cm in front of the camera
+        const cam = renderer.xr.getCamera();
+        cube.position.set(0, -0.05, -0.5).applyMatrix4(cam.matrixWorld);
+      }
       scene.add(cube);
+      placed++;
     });
     scene.add(controller);
 
@@ -95,14 +106,29 @@
     // --- Hit-test plumbing ---
     let hitTestSource = null;
     let hitTestRequested = false;
+    let hitTestError = '';
+    let placed = 0, frames = 0, lastHits = 0, tracking = false;
+    const debug = document.getElementById('debug');
+
+    async function requestHitTest(session) {
+      const space = await session.requestReferenceSpace('viewer');
+      try {
+        // 'point' lets ARCore return hits on feature points before a full plane is found
+        return await session.requestHitTestSource({ space, entityTypes: ['plane', 'point'] });
+      } catch (e) {
+        return await session.requestHitTestSource({ space });
+      }
+    }
 
     renderer.xr.addEventListener('sessionstart', () => {
       previewCube.visible = false;
+      document.body.classList.add('ar');
       document.getElementById('back').style.display = 'none';
-      info.textContent = 'Move your phone slowly to find a surface…';
+      info.textContent = 'Move your phone slowly to find a surface… (or just tap to drop a cube)';
     });
     renderer.xr.addEventListener('sessionend', () => {
       previewCube.visible = true;
+      document.body.classList.remove('ar');
       document.getElementById('back').style.display = '';
       reticle.visible = false;
       hitTestSource = null;
@@ -117,13 +143,17 @@
 
         if (!hitTestRequested) {
           hitTestRequested = true;
-          session.requestReferenceSpace('viewer')
-            .then(space => session.requestHitTestSource({ space }))
-            .then(src => { hitTestSource = src; });
+          requestHitTest(session)
+            .then(src => { hitTestSource = src; })
+            .catch(e => { hitTestError = e.message || String(e); info.textContent = 'Hit-test failed: ' + hitTestError; });
         }
+
+        frames++;
+        tracking = !!frame.getViewerPose(refSpace);
 
         if (hitTestSource) {
           const hits = frame.getHitTestResults(hitTestSource);
+          lastHits = hits.length;
           if (hits.length) {
             const pose = hits[0].getPose(refSpace);
             reticle.visible = true;
@@ -132,6 +162,11 @@
           } else {
             reticle.visible = false;
           }
+        }
+
+        if (frames % 15 === 0) {
+          debug.textContent =
+            `frames ${frames} · tracking ${tracking ? 'yes' : 'NO'} · hit-test ${hitTestSource ? 'ready' : (hitTestError ? 'error' : 'pending')} · hits ${lastHits} · cubes ${placed}`;
         }
       } else {
         // Non-AR preview: spin the cube
