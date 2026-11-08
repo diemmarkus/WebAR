@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Pinch Cube · WebAR</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #111; font-family: system-ui, sans-serif; color: #fff; }
+    body.ar { background: transparent; }
+    #info {
+      position: absolute; top: 0; left: 0; right: 0;
+      padding: 16px; text-align: center; font-size: 15px; line-height: 1.4;
+      background: linear-gradient(#000a, #0000); pointer-events: none; z-index: 2;
+    }
+    #info b { color: #82b1ff; }
+    #back { position: absolute; bottom: 72px; left: 50%; transform: translateX(-50%); z-index: 3; color: #fff; opacity: .7; font-size: 14px; text-decoration: none; }
+    body.ar #back { display: none; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <a id="back" href="../">← Experiments</a>
+  <div id="info">Checking for WebXR AR support…</div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+    const info = document.getElementById('info');
+    const COLOR = 0x2979ff;
+    const SIZE = 0.1;            // 10 cm cube
+    const FALLBACK_DIST = 1.0;   // metres in front of the camera when no hand is tracked
+    const PINCH_ON = 0.015, PINCH_OFF = 0.03; // thumb–index distance in metres (hysteresis)
+
+    // --- Scene ---
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 20);
+    camera.position.set(0, 0, 0.6);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(devicePixelRatio);
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.xr.enabled = true;
+    renderer.xr.setReferenceSpaceType('local');
+    document.body.appendChild(renderer.domElement);
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 2.5));
+    const dir = new THREE.DirectionalLight(0xffffff, 1.5);
+    dir.position.set(1, 2, 1);
+    scene.add(dir);
+
+    // Centred cube geometry: the pinch point is the cube's centre
+    const cubeGeo = new THREE.BoxGeometry(SIZE, SIZE, SIZE);
+    const cubeMat = new THREE.MeshStandardMaterial({ color: COLOR, roughness: 0.4 });
+    function spawnCube(position, quaternion) {
+      const cube = new THREE.Mesh(cubeGeo, cubeMat);
+      cube.position.copy(position);
+      if (quaternion) cube.quaternion.copy(quaternion);
+      scene.add(cube);
+      hint.visible = false;
+      return cube;
+    }
+
+    // Preview cube before AR
+    const previewCube = new THREE.Mesh(cubeGeo, cubeMat);
+    scene.add(previewCube);
+
+    // --- Floating hint (DOM text isn't visible on glasses) ---
+    function makeLabelTexture(text) {
+      const c = document.createElement('canvas');
+      c.width = 512; c.height = 128;
+      const g = c.getContext('2d');
+      g.fillStyle = 'rgba(0,0,0,0.55)';
+      g.beginPath(); g.roundRect(4, 4, 504, 120, 60); g.fill();
+      g.fillStyle = '#fff';
+      g.font = '600 52px system-ui, sans-serif';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(text, 256, 66);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    }
+    const hintTex = { pinch: makeLabelTexture('Pinch to place cube'), tap: makeLabelTexture('Tap to place cube') };
+    const hint = new THREE.Sprite(new THREE.SpriteMaterial({ map: hintTex.tap, depthTest: false, transparent: true }));
+    hint.scale.set(0.3, 0.075, 1);
+    hint.renderOrder = 10;
+    hint.visible = false;
+    scene.add(hint);
+
+    // --- Helpers ---
+    const tmpPos = new THREE.Vector3(), tmpQuat = new THREE.Quaternion();
+    function inFrontOfCamera(dist) {
+      const cam = renderer.xr.getCamera();
+      cam.getWorldPosition(tmpPos);
+      cam.getWorldQuaternion(tmpQuat);
+      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(tmpQuat);
+      return { pos: tmpPos.clone().addScaledVector(fwd, dist), quat: tmpQuat.clone() };
+    }
+
+    // --- Hands: pinch spawns a cube at the pinch point ---
+    const hands = [0, 1].map(i => {
+      const hand = renderer.xr.getHand(i);
+      scene.add(hand);
+      const dot = new THREE.Mesh(
+        new THREE.SphereGeometry(0.006, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0xffffff })
+      );
+      dot.visible = false;
+      scene.add(dot);
+      return { hand, dot, pinching: false };
+    });
+    const tip = new THREE.Vector3(), thumb = new THREE.Vector3();
+
+    function updateHands() {
+      let tracked = 0;
+      for (const h of hands) {
+        const it = h.hand.joints['index-finger-tip'], tt = h.hand.joints['thumb-tip'];
+        if (!it || !tt || !it.visible || !tt.visible) { h.dot.visible = false; h.pinching = false; continue; }
+        tracked++;
+        it.getWorldPosition(tip);
+        tt.getWorldPosition(thumb);
+        const d = tip.distanceTo(thumb);
+        h.dot.position.copy(tip).add(thumb).multiplyScalar(0.5);
+        h.dot.visible = true;
+        h.dot.material.color.set(d < PINCH_OFF ? COLOR : 0xffffff);
+
+        if (!h.pinching && d < PINCH_ON) {
+          h.pinching = true;
+          spawnCube(h.dot.position);
+        } else if (h.pinching && d > PINCH_OFF) {
+          h.pinching = false;
+        }
+      }
+      return tracked;
+    }
+
+    // --- No hand (screen tap / controller): cube 1 m in front of the camera ---
+    for (let i = 0; i < 2; i++) {
+      const c = renderer.xr.getController(i);
+      c.addEventListener('select', e => {
+        if (e.data && e.data.hand) return; // hand selects are handled as pinches above
+        const { pos, quat } = inFrontOfCamera(FALLBACK_DIST);
+        spawnCube(pos, quat);
+      });
+      scene.add(c);
+    }
+
+    // --- AR button ---
+    if (navigator.xr && await navigator.xr.isSessionSupported('immersive-ar').catch(() => false)) {
+      info.innerHTML = 'Tap <b>Start AR</b>. Pinch to place a cube at your fingers — or tap the screen for one 1 m ahead.';
+    } else {
+      info.innerHTML = 'WebXR AR isn’t available here.<br>Use <b>Chrome on Android</b> or <b>Spectacles</b>.';
+    }
+    document.body.appendChild(ARButton.createButton(renderer, {
+      optionalFeatures: ['hand-tracking', 'dom-overlay'],
+      domOverlay: { root: document.body }
+    }));
+
+    let placeHint = false;
+    renderer.xr.addEventListener('sessionstart', () => {
+      previewCube.visible = false;
+      document.body.classList.add('ar');
+      info.textContent = 'Tap the screen to place a cube 1 m ahead';
+      placeHint = true; // position the hint on the first frame, once the camera pose is known
+    });
+    renderer.xr.addEventListener('sessionend', () => {
+      previewCube.visible = true;
+      hint.visible = false;
+      document.body.classList.remove('ar');
+      info.innerHTML = 'Tap <b>Start AR</b> to try again.';
+    });
+
+    renderer.setAnimationLoop((t, frame) => {
+      if (frame) {
+        if (placeHint) {
+          placeHint = false;
+          const { pos } = inFrontOfCamera(FALLBACK_DIST);
+          hint.position.copy(pos);
+          hint.visible = true;
+        }
+        const tracked = updateHands();
+        hint.material.map = tracked ? hintTex.pinch : hintTex.tap;
+      } else {
+        previewCube.rotation.y = t / 1000;
+        previewCube.rotation.x = t / 2500;
+      }
+      renderer.render(scene, camera);
+    });
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+  </script>
+</body>
+</html>
