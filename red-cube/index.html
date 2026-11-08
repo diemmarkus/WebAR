@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Red Cube · WebAR</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #111; font-family: system-ui, sans-serif; color: #fff; }
+    #info {
+      position: absolute; top: 0; left: 0; right: 0;
+      padding: 16px; text-align: center; font-size: 15px; line-height: 1.4;
+      background: linear-gradient(#000a, #0000); pointer-events: none; z-index: 2;
+    }
+    #info b { color: #ff8a80; }
+    #back { position: absolute; bottom: 72px; left: 50%; transform: translateX(-50%); z-index: 3; color: #fff; opacity: .7; font-size: 14px; text-decoration: none; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <a id="back" href="../">← Experiments</a>
+  <div id="info">Checking for WebXR AR support…</div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+    const info = document.getElementById('info');
+
+    // --- Basic scene ---
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 20);
+    camera.position.set(0, 0, 0.6);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(devicePixelRatio);
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.xr.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 2.5));
+    const dir = new THREE.DirectionalLight(0xffffff, 1.5);
+    dir.position.set(1, 2, 1);
+    scene.add(dir);
+
+    // --- The cube (10 cm) ---
+    const cubeGeo = new THREE.BoxGeometry(0.1, 0.1, 0.1).translate(0, 0.05, 0); // sit on the surface
+    const makeCube = () => new THREE.Mesh(
+      cubeGeo,
+      new THREE.MeshStandardMaterial({ color: 0xe53935, roughness: 0.4 })
+    );
+
+    // Preview cube shown before entering AR (or on unsupported devices)
+    const previewCube = makeCube();
+    previewCube.position.set(0, -0.05, 0);
+    scene.add(previewCube);
+
+    // --- Reticle that follows detected surfaces ---
+    const reticle = new THREE.Mesh(
+      new THREE.RingGeometry(0.05, 0.065, 32).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xffffff })
+    );
+    reticle.matrixAutoUpdate = false;
+    reticle.visible = false;
+    scene.add(reticle);
+
+    // --- Tap to place a cube where the reticle is ---
+    const controller = renderer.xr.getController(0);
+    controller.addEventListener('select', () => {
+      if (!reticle.visible) return;
+      const cube = makeCube();
+      reticle.matrix.decompose(cube.position, cube.quaternion, cube.scale);
+      scene.add(cube);
+    });
+    scene.add(controller);
+
+    // --- AR button (needs HTTPS + a WebXR-capable browser) ---
+    if (navigator.xr && await navigator.xr.isSessionSupported('immersive-ar').catch(() => false)) {
+      info.innerHTML = 'Tap <b>Start AR</b>, move your phone slowly to find a surface, then tap to place cubes.';
+    } else {
+      info.innerHTML = 'WebXR AR isn’t available here.<br>Open this page over <b>HTTPS</b> in <b>Chrome on Android</b> (ARCore).';
+    }
+    document.body.appendChild(ARButton.createButton(renderer, {
+      requiredFeatures: ['hit-test'],
+      optionalFeatures: ['dom-overlay'],
+      domOverlay: { root: document.body }
+    }));
+
+    // --- Hit-test plumbing ---
+    let hitTestSource = null;
+    let hitTestRequested = false;
+
+    renderer.xr.addEventListener('sessionstart', () => {
+      previewCube.visible = false;
+      document.getElementById('back').style.display = 'none';
+      info.textContent = 'Move your phone slowly to find a surface…';
+    });
+    renderer.xr.addEventListener('sessionend', () => {
+      previewCube.visible = true;
+      document.getElementById('back').style.display = '';
+      reticle.visible = false;
+      hitTestSource = null;
+      hitTestRequested = false;
+      info.innerHTML = 'Tap <b>Start AR</b> to try again.';
+    });
+
+    renderer.setAnimationLoop((t, frame) => {
+      if (frame) {
+        const session = renderer.xr.getSession();
+        const refSpace = renderer.xr.getReferenceSpace();
+
+        if (!hitTestRequested) {
+          hitTestRequested = true;
+          session.requestReferenceSpace('viewer')
+            .then(space => session.requestHitTestSource({ space }))
+            .then(src => { hitTestSource = src; });
+        }
+
+        if (hitTestSource) {
+          const hits = frame.getHitTestResults(hitTestSource);
+          if (hits.length) {
+            const pose = hits[0].getPose(refSpace);
+            reticle.visible = true;
+            reticle.matrix.fromArray(pose.transform.matrix);
+            info.textContent = 'Tap to place a cube';
+          } else {
+            reticle.visible = false;
+          }
+        }
+      } else {
+        // Non-AR preview: spin the cube
+        previewCube.rotation.y = t / 1000;
+        previewCube.rotation.x = t / 2500;
+      }
+      renderer.render(scene, camera);
+    });
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+  </script>
+</body>
+</html>
