@@ -76,8 +76,8 @@
     scene.add(reticle);
 
     // --- Tap to place a cube where the reticle is ---
-    const controller = renderer.xr.getController(0);
-    controller.addEventListener('select', () => {
+    function placeCube(e) {
+      if (e && e.data && e.data.hand) return; // hands are handled by pinch detection below
       const cube = makeCube();
       if (reticle.visible) {
         reticle.matrix.decompose(cube.position, cube.quaternion, cube.scale);
@@ -87,9 +87,54 @@
         cube.position.set(0, -0.05, -0.5).applyMatrix4(cam.matrixWorld);
       }
       scene.add(cube);
-      placed++;
+      onPlaced();
+    }
+    for (let i = 0; i < 2; i++) {
+      const c = renderer.xr.getController(i);
+      c.addEventListener('select', placeCube);
+      scene.add(c);
+    }
+
+    // --- Hand tracking: pinch thumb + index to drop a cube at your fingertips (Spectacles, Quest, …) ---
+    const PINCH_ON = 0.015, PINCH_OFF = 0.03; // metres, with hysteresis
+    const hands = [0, 1].map(i => {
+      const hand = renderer.xr.getHand(i);
+      scene.add(hand);
+      const dot = new THREE.Mesh(
+        new THREE.SphereGeometry(0.006, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0xffffff })
+      );
+      dot.visible = false;
+      scene.add(dot);
+      return { hand, dot, pinching: false };
     });
-    scene.add(controller);
+    const tip = new THREE.Vector3(), thumb = new THREE.Vector3();
+
+    function updateHands() {
+      let tracked = 0;
+      for (const h of hands) {
+        const it = h.hand.joints['index-finger-tip'], tt = h.hand.joints['thumb-tip'];
+        if (!it || !tt || !it.visible || !tt.visible) { h.dot.visible = false; h.pinching = false; continue; }
+        tracked++;
+        it.getWorldPosition(tip);
+        tt.getWorldPosition(thumb);
+        const d = tip.distanceTo(thumb);
+        h.dot.position.copy(tip).add(thumb).multiplyScalar(0.5);
+        h.dot.visible = true;
+        h.dot.material.color.set(d < PINCH_OFF ? 0xe53935 : 0xffffff);
+
+        if (!h.pinching && d < PINCH_ON) {
+          h.pinching = true;
+          const cube = makeCube();
+          cube.position.copy(h.dot.position).y -= 0.05; // centre the cube on the pinch point
+          scene.add(cube);
+          onPlaced();
+        } else if (h.pinching && d > PINCH_OFF) {
+          h.pinching = false;
+        }
+      }
+      return tracked;
+    }
 
     // --- AR button (needs HTTPS + a WebXR-capable browser) ---
     if (navigator.xr && await navigator.xr.isSessionSupported('immersive-ar').catch(() => false)) {
@@ -98,8 +143,7 @@
       info.innerHTML = 'WebXR AR isn’t available here.<br>Open this page over <b>HTTPS</b> in <b>Chrome on Android</b> (ARCore).';
     }
     document.body.appendChild(ARButton.createButton(renderer, {
-      requiredFeatures: ['hit-test'],
-      optionalFeatures: ['dom-overlay'],
+      optionalFeatures: ['hit-test', 'hand-tracking', 'dom-overlay'],
       domOverlay: { root: document.body }
     }));
 
@@ -107,8 +151,22 @@
     let hitTestSource = null;
     let hitTestRequested = false;
     let hitTestError = '';
-    let placed = 0, frames = 0, lastHits = 0, tracking = false;
+    let placed = 0, frames = 0, lastHits = 0, tracking = false, handsTracked = 0;
     const debug = document.getElementById('debug');
+
+    // After MAX_CUBES placements, stop hit-testing (saves battery/CPU; cubes can still be dropped)
+    const MAX_CUBES = 10;
+    let hitTestStopped = false;
+    function onPlaced() {
+      placed++;
+      if (placed >= MAX_CUBES && !hitTestStopped) {
+        hitTestStopped = true;
+        if (hitTestSource) hitTestSource.cancel();
+        hitTestSource = null;
+        reticle.visible = false;
+        info.textContent = `${MAX_CUBES} cubes placed — surface detection off`;
+      }
+    }
 
     async function requestHitTest(session) {
       const space = await session.requestReferenceSpace('viewer');
@@ -124,7 +182,7 @@
       previewCube.visible = false;
       document.body.classList.add('ar');
       document.getElementById('back').style.display = 'none';
-      info.textContent = 'Move your phone slowly to find a surface… (or just tap to drop a cube)';
+      info.textContent = 'Find a surface and tap — or pinch with your fingers on glasses';
     });
     renderer.xr.addEventListener('sessionend', () => {
       previewCube.visible = true;
@@ -133,6 +191,8 @@
       reticle.visible = false;
       hitTestSource = null;
       hitTestRequested = false;
+      hitTestStopped = false;
+      placed = 0;
       info.innerHTML = 'Tap <b>Start AR</b> to try again.';
     });
 
@@ -141,15 +201,16 @@
         const session = renderer.xr.getSession();
         const refSpace = renderer.xr.getReferenceSpace();
 
-        if (!hitTestRequested) {
+        if (!hitTestRequested && !hitTestStopped) {
           hitTestRequested = true;
           requestHitTest(session)
-            .then(src => { hitTestSource = src; })
-            .catch(e => { hitTestError = e.message || String(e); info.textContent = 'Hit-test failed: ' + hitTestError; });
+            .then(src => { if (hitTestStopped) src.cancel(); else hitTestSource = src; })
+            .catch(e => { hitTestError = e.message || String(e); });
         }
 
         frames++;
         tracking = !!frame.getViewerPose(refSpace);
+        handsTracked = updateHands();
 
         if (hitTestSource) {
           const hits = frame.getHitTestResults(hitTestSource);
@@ -166,7 +227,7 @@
 
         if (frames % 15 === 0) {
           debug.textContent =
-            `frames ${frames} · tracking ${tracking ? 'yes' : 'NO'} · hit-test ${hitTestSource ? 'ready' : (hitTestError ? 'error' : 'pending')} · hits ${lastHits} · cubes ${placed}`;
+            `frames ${frames} · tracking ${tracking ? 'yes' : 'NO'} · hit-test ${hitTestStopped ? 'stopped' : hitTestSource ? 'ready' : (hitTestError ? 'error' : 'pending')} · hits ${lastHits} · hands ${handsTracked} · cubes ${placed}`;
         }
       } else {
         // Non-AR preview: spin the cube
