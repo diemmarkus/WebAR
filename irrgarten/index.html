@@ -1,0 +1,1084 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Irrgarten · WebAR</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bangers&family=Kalam:wght@400;700&display=swap">
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #111; font-family: system-ui, sans-serif; color: #fff; }
+    body.ar { background: transparent; }
+    canvas { touch-action: none; }
+    #info {
+      position: absolute; top: 0; left: 0; right: 0;
+      padding: 16px; text-align: center; font-size: 15px; line-height: 1.4;
+      background: linear-gradient(#000a, #0000); pointer-events: none; z-index: 2;
+    }
+    #info b { color: #FFD93B; }
+    /* Bottom bar: back button sits left of three.js' AR button, styled to match it */
+    #bar { position: absolute; bottom: 20px; left: 0; right: 0; display: flex; justify-content: center; align-items: stretch; gap: 10px; z-index: 3; pointer-events: none; }
+    #bar > :not(#back) { position: static !important; pointer-events: auto; }
+    #back {
+      display: flex; align-items: center; padding: 12px 10px; border: 1px solid #fff; border-radius: 4px;
+      background: rgba(0,0,0,0.1); color: #fff; font: normal 13px sans-serif; text-decoration: none;
+      opacity: .5; outline: none; pointer-events: auto;
+    }
+    #back:hover, #back:focus-visible { opacity: 1; }
+    body.ar #back { display: none; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="bar"><a id="back" href="../">← EXPERIMENTS</a></div>
+  <div id="info">Checking for WebXR AR support…</div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+    /* =====================================================================
+       Irrgarten in AR: Jonas's hedge maze (diemmarkus/maze/irrgarten) as a
+       little tilt board on your table. The hedges grow up out of the board,
+       the ball is a real ball. Tilt your head forward/back and to the side
+       and the board tilts with it. Everything else is the original game.
+       ===================================================================== */
+
+    const info = document.getElementById('info');
+    const C={paper:'#FFD93B',dot:'#F2A81D',ink:'#16120F',lawn:'#6CC24A',hedge:'#2E9A4B',leaf:'#8FDB6A',path:'#F4D9A0',pop:'#E8322E',white:'#FFFDF6',soda:'#7FE3F0'};
+    const FONT_D='Bangers, Impact, "Arial Black", sans-serif';
+
+    // --- Board size in the room ---
+    const BOARD_W=0.5;      // maze width in metres (cells get smaller as the maze grows)
+    const PADC=0.5;         // lawn border around the maze, in cells
+    const LIFT=0.05;        // the board sits on a little stand, so it can tilt without sinking into the table
+    const MAX_TILT=THREE.MathUtils.degToRad(8);   // how far the board visibly tilts
+    const HEAD_FULL=THREE.MathUtils.degToRad(16), HEAD_DEAD=THREE.MathUtils.degToRad(2);
+
+    // --- Texts (German / English) ---
+    const LANG={
+      de:{title:'IRRGARTEN!',lvl:n=>'LVL '+n,pts:n=>n+' PKT',grow:'ZUGEWACHSEN',level:n=>'LEVEL '+n+'!',find:'FINDE DAS LOCH!',sink:['PLOPP!','DRIN!','LOCH!'],diff:['LEICHT','MITTEL','SCHWER'],snip:'SCHNIPP!',hurry:'SCHNELL!',rustle:['RASCHEL!','KNISTER!'],
+        moved:'VERSCHOBEN!',zap:'WUSCH!',munch:'MAMPF!',over:'ZUGEWACHSEN!',stuck:'Die Wege sind zu.',fellT:'REINGEFALLEN!',fellP:'Das war das falsche Loch.',stungT:'GESTOCHEN!',stungP:'Die Wespen haben dich erwischt.',
+        final:(p,l)=>p+' · LEVEL '+l,best:n=>'REKORD: '+n,startAt:'LEVEL',of:'VON',level0:'WAAGRECHT!',
+        go:'$ = LOS!',again:'$ = NOCHMAL',move:'LANG HALTEN = UMSETZEN',tiltHint:'KOPF NEIGEN = TISCH KIPPEN',recal:'$ IM SPIEL = NEU WAAGRECHT',
+        lvlAR:'KOPF ZUR SEITE = LEVEL',diffAR:'NICKEN = SCHWIERIGKEIT',lvlKb:'←/→ = LEVEL',diffKb:'↑/↓ = SCHWIERIGKEIT',
+        pinch:'PINCH',tap:'TIPPEN',key:'LEERTASTE',pinchL:'Pinch',tapL:'Tippen',place:'$: Irrgarten hier hinstellen',placeAir:'$: hier hinstellen · besser auf einen Tisch',
+        ok:'Tippe <b>Start AR</b>, schau auf einen Tisch und pinche (oder tippe), um den Irrgarten hinzustellen. Dann <b>Kopf nach vorn/hinten und zur Seite neigen</b> – der Tisch kippt mit, die Kugel rollt. Finde das Loch mit der Fahne, bevor die Hecken zuwachsen.',
+        noAr:'WebXR AR gibt’s hier nicht – unten eine spielbare Vorschau: <b>Pfeiltasten/WASD</b> oder <b>ziehen</b> = kippen, <b>Leertaste</b> = los.<br>Für AR: <b>Chrome auf Android</b> oder <b>Spectacles</b>.',
+        inAr:'Schau auf einen Tisch'},
+      en:{title:'HEDGE MAZE!',lvl:n=>'LVL '+n,pts:n=>n+' PTS',grow:'OVERGROWN',level:n=>'LEVEL '+n+'!',find:'FIND THE HOLE!',sink:['PLOP!','IN!','HOLE!'],diff:['EASY','MEDIUM','HARD'],snip:'SNIP!',hurry:'HURRY!',rustle:['RUSTLE!','SWISH!'],
+        moved:'MOVED!',zap:'ZAP!',munch:'MUNCH!',over:'OVERGROWN!',stuck:'The paths are shut.',fellT:'FELL IN!',fellP:'Wrong hole.',stungT:'STUNG!',stungP:'The wasps got you.',
+        final:(p,l)=>p+' · LEVEL '+l,best:n=>'BEST: '+n,startAt:'LEVEL',of:'OF',level0:'LEVELLED!',
+        go:'$ = GO!',again:'$ = AGAIN',move:'LONG HOLD = MOVE',tiltHint:'TILT YOUR HEAD = TILT THE TABLE',recal:'$ IN GAME = RESET LEVEL',
+        lvlAR:'HEAD TO THE SIDE = LEVEL',diffAR:'NOD = DIFFICULTY',lvlKb:'←/→ = LEVEL',diffKb:'↑/↓ = DIFFICULTY',
+        pinch:'PINCH',tap:'TAP',key:'SPACE',pinchL:'Pinch',tapL:'Tap',place:'$: put the maze here',placeAir:'$: put it here · a table is best',
+        ok:'Tap <b>Start AR</b>, look at a table and pinch (or tap) to put the maze there. Then <b>tilt your head forward/back and to the side</b> – the table tilts with you and the ball rolls. Find the flagged hole before the hedges close in.',
+        noAr:'WebXR AR isn’t available here – below is a playable preview: <b>arrow keys/WASD</b> or <b>drag</b> = tilt, <b>space</b> = go.<br>For AR use <b>Chrome on Android</b> or <b>Spectacles</b>.',
+        inAr:'Look at a table'}};
+    let langKey='de';
+    try{const s=localStorage.getItem('irrgarten.lang');langKey=LANG[s]?s:((navigator.language||'de').startsWith('de')?'de':'en')}catch(_){}
+    const T=LANG[langKey];
+    document.documentElement.lang=langKey;
+
+    // =====================================================================
+    // Game logic: taken over unchanged from the original
+    // =====================================================================
+const BALL_R=.2;            // ball radius
+const HOLE_R=.3;            // hole radius
+const T0=.14;               // hedge thickness at level start
+const T_END=1-2*BALL_R;     // thickness at which corridors are exactly as wide as the ball: shut
+const ACC=34;               // cells/s² at full tilt
+const MAX_V=8.5;
+const WASP_V=[1.8,2.2,2.6],WASP_WAKE=.6,WASP_CHASE=2.8,WASP_LEASH=2.0;   // wasp speed per difficulty (cells/s), take-off delay and chase time (s), how far from the nest they fly              // cells/s
+    const DIFFS=[{k:'easy',mul:2.2},{k:'medium',mul:1.5},{k:'hard',mul:1}];
+    let diff=1;
+    try{const d=+localStorage.getItem('irrgarten.diff');if(d>=0&&d<3)diff=d}catch(_){}
+    const memReach=[1,1,1];
+    const reachKey=()=>'irrgarten-ar.reached.'+DIFFS[diff].k;
+    function reached(){try{return Math.max(1,+localStorage.getItem(reachKey())||1,memReach[diff])}catch(_){return memReach[diff]||1}}
+    function setReached(l){memReach[diff]=Math.max(memReach[diff],l);try{if(l>(+localStorage.getItem(reachKey())||1))localStorage.setItem(reachKey(),l)}catch(_){}}
+    const bestKey=()=>'irrgarten-ar.best.'+DIFFS[diff].k;
+    let startLvl=reached();
+
+// Recursive backtracker: a perfect maze (exactly one route between any two cells).
+// h[r*cols+c] = wall on top of cell (c,r), r in 0..rows; v[r*(cols+1)+c] = wall left of cell (c,r), c in 0..cols.
+function genMaze(cols,rows){
+  const h=new Uint8Array((rows+1)*cols).fill(1),v=new Uint8Array(rows*(cols+1)).fill(1),seen=new Uint8Array(cols*rows);
+  const stack=[[0,0]];seen[0]=1;
+  while(stack.length){
+    const[c,r]=stack[stack.length-1],nb=[];
+    if(r>0&&!seen[(r-1)*cols+c])nb.push([c,r-1,0]);
+    if(r<rows-1&&!seen[(r+1)*cols+c])nb.push([c,r+1,1]);
+    if(c>0&&!seen[r*cols+c-1])nb.push([c-1,r,2]);
+    if(c<cols-1&&!seen[r*cols+c+1])nb.push([c+1,r,3]);
+    if(!nb.length){stack.pop();continue}
+    const[nc,nr,d]=nb[Math.random()*nb.length|0];
+    if(d===0)h[r*cols+c]=0;else if(d===1)h[(r+1)*cols+c]=0;else if(d===2)v[r*(cols+1)+c]=0;else v[r*(cols+1)+c+1]=0;
+    seen[nr*cols+nc]=1;stack.push([nc,nr]);
+  }
+  // merge wall runs into long segments: fewer capsules to collide with and to draw
+  const segs=[];
+  for(let r=0;r<=rows;r++){let s=-1;for(let c=0;c<=cols;c++){const on=c<cols&&h[r*cols+c];if(on&&s<0)s=c;if(!on&&s>=0){segs.push({x1:s,y1:r,x2:c,y2:r});s=-1}}}
+  for(let c=0;c<=cols;c++){let s=-1;for(let r=0;r<=rows;r++){const on=r<rows&&v[r*(cols+1)+c];if(on&&s<0)s=r;if(!on&&s>=0){segs.push({x1:c,y1:s,x2:c,y2:r});s=-1}}}
+  // bushes: round blobs strung along every wall, each with its own size, highlight, flower or grass tuft
+  const blobs=[],FL=[C.pop,C.white,C.paper,'#F59AC2'];
+  for(const s of segs){
+    const L=Math.hypot(s.x2-s.x1,s.y2-s.y1),n=Math.max(1,Math.round(L*4.5)),nx=(s.y2-s.y1)/L,ny=-(s.x2-s.x1)/L;
+    for(let i=0;i<=n;i++){
+      const t=i/n;
+      blobs.push({x:s.x1+(s.x2-s.x1)*t,y:s.y1+(s.y2-s.y1)*t,nx,ny,o:(Math.random()-.5)*.45,k:.92+Math.random()*.32,
+        hl:Math.random()<.7,fl:Math.random()<.13?FL[Math.random()*FL.length|0]:null,fa:Math.random()*7,
+        gr:Math.random()<.4?(Math.random()<.5?1:-1):0,ga:(Math.random()-.5)*.9});
+    }
+  }
+  return{cols,rows,h,v,segs,blobs};
+}
+function open(m,c,r,d){ // can you walk from cell (c,r) in direction d?
+  if(d===0)return r>0&&!m.h[r*m.cols+c];
+  if(d===1)return r<m.rows-1&&!m.h[(r+1)*m.cols+c];
+  if(d===2)return c>0&&!m.v[r*(m.cols+1)+c];
+  return c<m.cols-1&&!m.v[r*(m.cols+1)+c+1];
+}
+function bfs(m,sc,sr){
+  const dist=new Int16Array(m.cols*m.rows).fill(-1),q=[[sc,sr]];dist[sr*m.cols+sc]=0;
+  const D=[[0,-1],[0,1],[-1,0],[1,0]];
+  while(q.length){const[c,r]=q.shift();for(let d=0;d<4;d++)if(open(m,c,r,d)){const nc=c+D[d][0],nr=r+D[d][1],i=nr*m.cols+nc;if(dist[i]<0){dist[i]=dist[r*m.cols+c]+1;q.push([nc,nr])}}}
+  return dist;
+}
+
+let st=null;
+let gdev={x:0,y:0},cal=null,needCal=true;
+const joy={on:false,x:0,y:0,ox:0,oy:0,px:0,py:0},keys={};
+const colsFor=l=>Math.min(12,4+l);
+const secPerStep=l=>Math.max(.42,.95-.05*(l-1));
+function fresh(){return{mode:'play',level:1,score:0,parts:[],banner:null,diff}}
+function usedCells(){const u=new Set();for(const o of[...st.shears,...st.caters,...(st.nest?[st.nest]:[]),...(st.tele||[]),...(st.dot?[st.dot]:[]),...(st.pit?[st.pit]:[]),st.hole])u.add((o.x|0)+','+(o.y|0));return u}
+function extrasNow(){return st.shears.length+st.caters.length+(st.nest?1:0)+(st.tele?1:0)+(st.dot?1:0)+(st.pit?1:0)}
+let bag=[],tbag=[],wbag=[],gbag=[],kbag=[];
+function flip(b){if(!b.length)b.push(...[true,false].sort(()=>Math.random()-.5));return b.pop()}
+function newLevel(l){
+  st.level=l;if(st.mode!=='start')setReached(l);
+  const cols=colsFor(l);
+  const rows=Math.max(cols,Math.min(16,Math.round(cols*1.25)));   // a table board: a bit deeper than wide
+  const m=genMaze(cols,rows);
+  // start in a random corner, hole in the cell farthest away along the paths
+  const corners=[[0,0],[cols-1,0],[0,rows-1],[cols-1,rows-1]],[sc,sr]=corners[Math.random()*4|0];
+  const dist=bfs(m,sc,sr);let best=0;for(let i=1;i<dist.length;i++)if(dist[i]>dist[best])best=i;
+  st.maze=m;st.hole={x:best%cols+.5,y:(best/cols|0)+.5};
+  st.ball={x:sc+.5,y:sr+.5,vx:0,vy:0,ru:0,rv:0,scale:1};
+  // power-ups always sit in a dead end (a detour you have to choose), preferably in the middle part of the route
+  const maxd=dist[best],deadEnds=[];
+  for(let i=0;i<dist.length;i++){
+    if(i===best||dist[i]===0)continue;
+    const c=i%cols,r=i/cols|0;let exits=0;for(let d=0;d<4;d++)if(open(m,c,r,d))exits++;
+    if(exits===1)deadEnds.push({x:c+.5,y:r+.5,w:dist[i]>=maxd*.25&&dist[i]<=maxd*.8?4:1});
+  }
+  const cand=deadEnds;
+  const take=n=>{const out=[];for(;n>0&&cand.length;n--){
+    let tot=cand.reduce((a,c)=>a+c.w,0),pick=Math.random()*tot,i=0;
+    while(i<cand.length-1&&pick>cand[i].w){pick-=cand[i].w;i++}
+    out.push({x:cand[i].x,y:cand[i].y,taken:false,ph:Math.random()*7});cand.splice(i,1);
+  }return out};
+  // power-ups take turns: each run of three levels has one with shears, one with a caterpillar and one with nothing, shuffled
+  if(!bag.length)bag.push(...['shears','cater','none'].sort(()=>Math.random()-.5));
+  const kind=bag.pop(),many=1;
+  st.shears=take(kind==='shears'?many:0);
+  st.caters=take(kind==='cater'?many:0);
+  st.munchers=[];st.rate=1;
+  // at most 2 extras per level: power-up first, then a random pick among the hazards whose turn it is
+  const want=[];
+  if(l>=3&&flip(wbag))want.push('nest');
+  if(l>=2&&flip(tbag))want.push('tele');
+  if(l>=2&&flip(gbag))want.push('dot');
+  if(l>=2&&flip(kbag))want.push('pit');
+  want.sort(()=>Math.random()-.5);
+  const allow=new Set(want.slice(0,Math.max(0,2-st.shears.length-st.caters.length)));
+  st.dot=null;st.pit=null;st.tele=null;
+  // wasp nest, every other level from level 3 (shuffled), somewhere along the middle of the maze
+  st.nest=null;st.wasps=[];
+  if(allow.has('nest')){
+    {
+      const used=new Set([...st.shears,...st.caters].map(o=>(o.x|0)+','+(o.y|0)));
+      const C2=[];for(let i=0;i<dist.length;i++){if(i===best||dist[i]<Math.max(3,maxd*.25)||dist[i]>maxd*.85)continue;if(!used.has((i%cols)+','+(i/cols|0)))C2.push(i)}
+      if(C2.length){const i=C2[Math.random()*C2.length|0];st.nest={x:i%cols+.5,y:(i/cols|0)+.5,cool:0}}
+    }
+  }
+  // teleporter pair, every other level from level 2 (shuffled): one end in the first half of the route, the other far away from it
+  st.tele=null;st.tpLock=-1;
+  if(allow.has('tele')){
+    {
+      const used=new Set([...st.shears,...st.caters,...(st.nest?[st.nest]:[])].map(o=>(o.x|0)+','+(o.y|0)));used.add(sc+','+sr);used.add((best%cols)+','+(best/cols|0));
+      const free=i=>!used.has((i%cols)+','+(i/cols|0));
+      const A=[];for(let i=0;i<dist.length;i++)if(free(i)&&dist[i]>=maxd*.15&&dist[i]<=maxd*.5)A.push(i);
+      if(A.length){
+        const a=A[Math.random()*A.length|0],da=bfs(m,a%cols,a/cols|0);let far=0;for(const v of da)far=Math.max(far,v);
+        const B=[];for(let i=0;i<da.length;i++)if(free(i)&&i!==a&&da[i]>=far*.45)B.push(i);
+        if(B.length){const b2=B[Math.random()*B.length|0];
+          st.tele=[{x:a%cols+.5,y:(a/cols|0)+.5},{x:b2%cols+.5,y:(b2/cols|0)+.5}]}
+      }
+    }
+  }
+  // green dot, every other level from level 2 (shuffled), if there is still room for an extra: roll over it and the hole moves
+  st.dot=null;st.holeFrom=null;st.holeT=1;
+  if(allow.has('dot')){
+    {
+      const used=usedCells();used.add(sc+','+sr);
+      const D=[];for(let i=0;i<dist.length;i++){const c=i%cols,r=i/cols|0;if(used.has(c+','+r)||dist[i]<maxd*.2||dist[i]>maxd*.8)continue;
+        let e=0;for(let d=0;d<4;d++)if(open(m,c,r,d))e++;if(e>=2)D.push(i)}
+      if(D.length){const i=D[Math.random()*D.length|0];st.dot={x:i%cols+.5,y:(i/cols|0)+.5}}
+    }
+  }
+  // black hole (no flag): never on the real route from start to the hole, preferably in a dead end
+  if(allow.has('pit')){
+    const dh=bfs(m,best%cols,best/cols|0),used=usedCells();used.add(sc+','+sr);
+    const P=[],dd=st.dot?bfs(m,st.dot.x|0,st.dot.y|0):null,dotToHole=dd?dd[best]:0;
+    for(let i=0;i<dist.length;i++){const c=i%cols,r=i/cols|0;
+      if(used.has(c+','+r)||dist[i]<2||dist[i]+dh[i]===maxd)continue;
+      if(dd&&dd[i]+dh[i]===dotToHole)continue;   // nor on the way from the green dot to the hole   // on the route: start→cell→hole is exactly the shortest way
+      let e=0;for(let d=0;d<4;d++)if(open(m,c,r,d))e++;
+      for(let k=0;k<(e===1?4:1);k++)P.push(i)}
+    if(P.length){const i=P[Math.random()*P.length|0];st.pit={x:i%cols+.5,y:(i/cols|0)+.5}}
+  }
+  st.levelT=0;st.dur=(6+dist[best]*secPerStep(l))*DIFFS[st.diff].mul;st.cutPending=0;st.p=0;st.t=T0;st.hurried=false;st.sunk=false;st.rustleCD=0;
+  st.banner={text:T.level(l),sub:T.find,t:1.8,max:1.8};
+  onNewMaze();
+}
+
+    // gravity in the maze plane: from your head in AR, from keys / dragging in the preview
+    let headG={x:0,y:0};
+    function gravity(){
+      let x,y;
+      if(inAR){x=headG.x;y=headG.y}
+      else{
+        const kx=(keys.ArrowRight||keys.d?1:0)-(keys.ArrowLeft||keys.a?1:0),ky=(keys.ArrowDown||keys.s?1:0)-(keys.ArrowUp||keys.w?1:0);
+        x=joy.x*.5+kx*.4;y=joy.y*.5+ky*.4;
+      }
+      const L=Math.hypot(x,y);
+      if(L<.03)return{x:0,y:0};
+      if(L>.6){x*=.6/L;y*=.6/L}
+      return{x,y};
+    }
+
+function popText(x,y,text,col){st.parts.push({type:'pop',x,y,t:0,life:.7,rot:(Math.random()-.5)*.5,text,col})}
+function leaves(x,y,n,spd){
+  for(let i=0;i<n;i++){const a=Math.random()*7,v=(.6+Math.random())*spd;
+    st.parts.push({type:'leaf',x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v-.6,rot:Math.random()*7,vr:(Math.random()-.5)*12,t:0,life:.6+Math.random()*.4})}
+}
+function collide(b){
+  const hr=st.t/2,R=BALL_R+hr;
+  for(let it=0;it<3;it++){
+    for(const s of st.maze.segs){
+      if(b.x<Math.min(s.x1,s.x2)-R||b.x>Math.max(s.x1,s.x2)+R||b.y<Math.min(s.y1,s.y2)-R||b.y>Math.max(s.y1,s.y2)+R)continue;
+      const sx=s.x2-s.x1,sy=s.y2-s.y1,L2=sx*sx+sy*sy;
+      const u=Math.max(0,Math.min(1,((b.x-s.x1)*sx+(b.y-s.y1)*sy)/L2));
+      const qx=s.x1+sx*u,qy=s.y1+sy*u,dx=b.x-qx,dy=b.y-qy,d2=dx*dx+dy*dy;
+      if(d2>=R*R||d2<1e-10)continue;
+      const d=Math.sqrt(d2),nx=dx/d,ny=dy/d;
+      b.x=qx+nx*R;b.y=qy+ny*R;
+      const vn=b.vx*nx+b.vy*ny;
+      if(vn<0){
+        if(-vn>2.2&&st.rustleCD<=0){
+          st.rustleCD=.35;leaves(qx+nx*hr,qy+ny*hr,4,1.4);
+          if(-vn>4)popText(qx+nx*hr,qy+ny*hr,T.rustle[Math.random()*T.rustle.length|0],C.leaf);
+        }
+        b.vx-=1.3*vn*nx;b.vy-=1.3*vn*ny;     // a soft bounce off the leaves
+      }
+    }
+  }
+}
+function update(dt){
+  if(!st)return;
+  for(const p of st.parts){p.t+=dt;if(p.type==='spark'){p.x+=p.vx*dt;p.y+=p.vy*dt}if(p.type==='leaf'){p.vy+=3*dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.rot+=p.vr*dt}}
+  st.parts=st.parts.filter(p=>p.t<p.life);
+  if(st.banner){st.banner.t-=dt;if(st.banner.t<=0)st.banner=null}
+  if(!st.maze)return;
+  const b=st.ball;
+  if(st.mode==='play'){
+    st.levelT+=dt*st.rate;
+    if(st.cutPending>0){const c=Math.min(st.cutPending,dt*Math.max(3,st.cutPending*4));st.levelT=Math.max(0,st.levelT-c);st.cutPending-=c}
+    st.p=Math.min(1,st.levelT/st.dur);
+    if(st.p<.7)st.hurried=false;
+    st.t=T0+(T_END-T0)*Math.pow(st.p,1.25);
+    if(st.p>=.8&&!st.hurried){st.hurried=true;st.banner={text:T.hurry,t:1.1,max:1.1}}
+    st.rustleCD-=dt;
+    const g=gravity();
+    let ax=g.x*ACC,ay=g.y*ACC;
+    const hx=st.hole.x-b.x,hy=st.hole.y-b.y,hd=Math.hypot(hx,hy);
+    if(hd<HOLE_R&&st.holeT>=1){ax+=hx*60;ay+=hy*60}
+    if(st.pit){const px=st.pit.x-b.x,py=st.pit.y-b.y;if(Math.hypot(px,py)<HOLE_R){ax+=px*60;ay+=py*60}}   // the rim pulls the ball in
+    b.vx+=ax*dt;b.vy+=ay*dt;
+    const fr=Math.exp(-.9*dt);b.vx*=fr;b.vy*=fr;
+    const sp=Math.hypot(b.vx,b.vy);if(sp>MAX_V){b.vx*=MAX_V/sp;b.vy*=MAX_V/sp}
+    const n=Math.max(1,Math.ceil(Math.hypot(b.vx,b.vy)*dt/.05));
+    for(let i=0;i<n;i++){b.x+=b.vx*dt/n;b.y+=b.vy*dt/n;collide(b)}
+    b.ru+=b.vx*dt/BALL_R;b.rv+=b.vy*dt/BALL_R;
+    for(const sh of st.shears){
+      if(sh.taken||Math.hypot(sh.x-b.x,sh.y-b.y)>BALL_R+.25)continue;
+      sh.taken=true;st.cutPending+=st.levelT*.6;   // cut the growth back by 60 %
+      popText(sh.x,sh.y,T.snip,C.white);
+      const bl=st.maze.blobs;for(let i=0;i<24;i++){const q=bl[Math.random()*bl.length|0];leaves(q.x,q.y,1,2)}
+      leaves(sh.x,sh.y,10,2.2);
+    }
+    for(const ca of st.caters){
+      if(ca.taken||Math.hypot(ca.x-b.x,ca.y-b.y)>BALL_R+.25)continue;
+      ca.taken=true;st.rate=Math.max(.35,st.rate*.65);   // every caterpillar: hedges grow 35 % slower from now on
+      popText(ca.x,ca.y,T.munch,C.white);
+      // it bursts into a swarm of tiny caterpillars that crawl off into the hedges all over the maze and munch there
+      const bl=st.maze.blobs,n=Math.min(28,Math.max(16,bl.length/8|0)),step=bl.length/n;
+      for(let k=0;k<n;k++){const q=bl[(k*step+Math.random()*step)|0]||bl[0];
+        const jx=(Math.random()-.5)*st.t*.6,jy=(Math.random()-.5)*st.t*.6;
+        st.munchers.push({x:ca.x,y:ca.y,tx:q.x+jx,ty:q.y+jy,ph:Math.random()*7,delay:k*.03,spd:1.5+Math.random()*1.5,sz:.3+Math.random()*.12})}
+    }
+    if(st.tele){
+      if(st.tpLock>=0&&Math.hypot(st.tele[st.tpLock].x-b.x,st.tele[st.tpLock].y-b.y)>.42)st.tpLock=-1;   // left the exit: armed again
+      for(let i=0;i<2;i++){
+        if(i===st.tpLock)continue;const a=st.tele[i],o=st.tele[1-i];
+        if(Math.hypot(a.x-b.x,a.y-b.y)<.2){
+          popText(a.x,a.y,T.zap,C.white);b.x=o.x;b.y=o.y;st.tpLock=1-i;st.tpFlash=.35;
+          for(const q of[a,o])for(let k=0;k<8;k++){const an=k/8*7;st.parts.push({type:'spark',x:q.x,y:q.y,vx:Math.cos(an)*2.4,vy:Math.sin(an)*2.4,t:0,life:.35})}
+          break;
+        }
+      }
+    }
+    if(st.tpFlash>0)st.tpFlash-=dt;
+    if(st.holeT<1)st.holeT=Math.min(1,st.holeT+dt/.7);
+    const dt0=st.dot;
+    if(dt0&&Math.hypot(dt0.x-b.x,dt0.y-b.y)<BALL_R+.18){
+      st.dot=null;
+      // new spot: far from the ball along the paths, on a free cell
+      const m=st.maze,bc=Math.min(m.cols-1,b.x|0),br=Math.min(m.rows-1,b.y|0),db=bfs(m,bc,br);let far=0;for(const v of db)far=Math.max(far,v);
+      const used=usedCells(),C3=[];
+      const pk=st.pit?(st.pit.y|0)*m.cols+(st.pit.x|0):-1,dk=st.pit?bfs(m,st.pit.x|0,st.pit.y|0):null;
+      for(let i=0;i<db.length;i++){
+        if(used.has((i%m.cols)+','+(i/m.cols|0))||db[i]===0)continue;
+        if(dk&&db[pk]+dk[i]===db[i])continue;   // the black hole would sit on the way there
+        C3.push(i)}
+      const farOnes=C3.filter(i=>db[i]>=far*.55);if(farOnes.length)C3.splice(0,C3.length,...farOnes);
+      if(C3.length){const i=C3[Math.random()*C3.length|0];st.holeFrom={x:st.hole.x,y:st.hole.y};st.hole={x:i%m.cols+.5,y:(i/m.cols|0)+.5};st.holeT=0;
+        popText(dt0.x,dt0.y,T.moved,C.white);
+        for(let k=0;k<10;k++){const an=k/10*7;st.parts.push({type:'spark',x:st.holeFrom.x,y:st.holeFrom.y,vx:Math.cos(an)*2.6,vy:Math.sin(an)*2.6,t:0,life:.4})}}
+    }
+    // wasps: roll into the nest and three of them chase you, but only for a while and not far from home
+    const ne=st.nest;
+    if(ne){
+      if(ne.cool>0)ne.cool-=dt;
+      const nd=Math.hypot(ne.x-b.x,ne.y-b.y);
+      // rolling over the nest only stirs it up; the wasps come out once the ball has rolled off it
+      if(!st.wasps.length&&ne.cool<=0&&nd<BALL_R+.22)ne.stirred=true;
+      if(ne.stirred&&nd>BALL_R+.45){
+        ne.stirred=false;popText(ne.x,ne.y,'BZZZ!',C.paper);
+        for(let k=0;k<3;k++)st.wasps.push({x:ne.x,y:ne.y,vx:(Math.random()-.5)*3,vy:(Math.random()-.5)*3,t:0,ph:Math.random()*7,home:false});
+      }
+      for(const w of st.wasps){
+        w.t+=dt;w.ph+=dt;
+        if(w.t>WASP_CHASE)w.home=true;
+        const tx=w.home?ne.x:b.x+Math.cos(w.ph*2.3)*.25,ty=w.home?ne.y:b.y+Math.sin(w.ph*2.9)*.25;
+        let dx=tx-w.x,dy=ty-w.y;const d=Math.hypot(dx,dy)||1,spd=w.home?3:w.t<WASP_WAKE?.6:WASP_V[st.diff];
+        w.vx+=(dx/d*spd-w.vx)*Math.min(1,dt*4);w.vy+=(dy/d*spd-w.vy)*Math.min(1,dt*4);
+        w.x+=w.vx*dt;w.y+=w.vy*dt;
+        const hx=w.x-ne.x,hy=w.y-ne.y,hd=Math.hypot(hx,hy);
+        if(hd>WASP_LEASH){w.x=ne.x+hx/hd*WASP_LEASH;w.y=ne.y+hy/hd*WASP_LEASH}
+        if(w.home&&hd<.15)w.gone=true;
+        if(!w.home&&w.t>WASP_WAKE&&Math.hypot(w.x-b.x,w.y-b.y)<BALL_R+.1){
+          popText(b.x,b.y,'AUA!',C.white);gameOver('stung');return;
+        }
+      }
+      if(st.wasps.length&&st.wasps.every(w=>w.gone)){st.wasps=[];ne.cool=1.5}
+    }
+    for(const mu of st.munchers){if(mu.delay>0){mu.delay-=dt;continue}mu.x+=(mu.tx-mu.x)*Math.min(1,dt*mu.spd);mu.y+=(mu.ty-mu.y)*Math.min(1,dt*mu.spd)}
+    if(st.holeT>=1&&Math.hypot(st.hole.x-b.x,st.hole.y-b.y)<HOLE_R*.75){st.mode='sink';st.sinkT=0;st.trap=false}
+    else if(st.pit&&Math.hypot(st.pit.x-b.x,st.pit.y-b.y)<HOLE_R*.75){st.mode='sink';st.sinkT=0;st.trap=true}
+    else if(st.p>=1)gameOver();
+  }else if(st.mode==='sink'){
+    st.sinkT+=dt;const k=Math.min(1,st.sinkT/.35);
+    const tg=st.trap?st.pit:st.hole;
+    b.x+=(tg.x-b.x)*Math.min(1,dt*16);b.y+=(tg.y-b.y)*Math.min(1,dt*16);b.scale=1-.7*k;
+    if(st.trap){if(k>=1){b.scale=0;gameOver('fell')}return}
+    if(k>=1&&!st.sunk){
+      st.sunk=true;const left=Math.max(0,st.dur-st.levelT),gain=100*st.level+Math.round(left)*10;st.score+=gain;
+      popText(st.hole.x,st.hole.y,T.sink[Math.random()*T.sink.length|0],C.white);
+      st.parts.push({type:'gain',x:st.hole.x,y:st.hole.y,t:0,life:1.1,text:'+'+gain});
+    }
+    if(st.sinkT>1.3){newLevel(st.level+1);st.mode='play'}
+  }else if(st.mode==='over'){
+    if(!st.stung)st.t=Math.min(T_END+.12,st.t+dt*.15);   // keep closing in on the ball
+  }
+}
+
+    let appState='menu',clock=0,resultAt=0,lastResult=null;
+    function gameOver(reason){
+      st.mode='over';st.banner=null;st.reason=reason||'';st.stung=!!reason;if(!reason)leaves(st.ball.x,st.ball.y,14,2.5);
+      let best=0;
+      try{best=+localStorage.getItem(bestKey())||0;if(st.score>best){best=st.score;localStorage.setItem(bestKey(),best)}}catch(_){best=Math.max(best,st.score)}
+      lastResult={score:st.score,level:st.level,best,diff:st.diff,reason:st.reason};
+      startLvl=st.level;resultAt=clock+.9;
+    }
+
+    // =====================================================================
+    // 2D layers: the ground of the maze (paths, holes, items, wasps) and a
+    // layer floating above the hedges for the comic pops and flying leaves
+    // =====================================================================
+    let ctx=null,S=32,FW=0,FH=0;
+    const X=x=>(x+PADC)*S, Y=y=>(y+PADC)*S;
+    function mkLayer(){
+      const c=document.createElement('canvas'),g=c.getContext('2d');
+      const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;t.anisotropy=4;
+      return{c,g,t};
+    }
+    const FL=mkLayer(),TOP=mkLayer();
+    let lawnPat,pathPat;
+    function mkPattern(g,bg,dot,size,rad){
+      const o=document.createElement('canvas');o.width=o.height=size;const c=o.getContext('2d');
+      c.fillStyle=bg;c.fillRect(0,0,size,size);c.fillStyle=dot;
+      for(const[x,y]of[[size/4,size/4],[size*3/4,size*3/4]]){c.beginPath();c.arc(x,y,rad,0,7);c.fill()}
+      return g.createPattern(o,'repeat');
+    }
+function star(x,y,R,r,n){ctx.beginPath();for(let i=0;i<n*2;i++){const a=i/(n*2)*Math.PI*2-Math.PI/2,rr=i%2?r:R;ctx.lineTo(x+Math.cos(a)*rr,y+Math.sin(a)*rr)}ctx.closePath()}
+function inkText(txt,x,y,size,fill,rot=0){
+  ctx.save();ctx.translate(x,y);ctx.rotate(rot);ctx.font=`${size}px ${FONT_D}`;ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.lineJoin='round';ctx.lineWidth=size*.16;ctx.strokeStyle=C.ink;ctx.fillStyle=C.ink;ctx.fillText(txt,size*.06,size*.06);ctx.strokeText(txt,0,0);ctx.fillStyle=fill;ctx.fillText(txt,0,0);ctx.restore();
+}
+function drawTele(){
+  if(!st.tele)return;const now=performance.now()/1000,r=S*.34,lw=Math.max(2,S*.05);
+  st.tele.forEach((q,i)=>{
+    const x=X(q.x),y=Y(q.y),locked=i===st.tpLock;
+    ctx.save();ctx.translate(x,y);
+    ctx.beginPath();ctx.arc(0,0,r,0,7);ctx.fillStyle='#5B3FC4';ctx.fill();
+    ctx.save();ctx.clip();ctx.rotate((i?-1:1)*now*3);
+    for(let k=0;k<3;k++){ctx.rotate(Math.PI*2/3);ctx.beginPath();
+      for(let t=0;t<=1.001;t+=.05){const rr=r*1.05*t,an=t*3.4;ctx.lineTo(Math.cos(an)*rr,Math.sin(an)*rr)}
+      ctx.lineWidth=r*.28;ctx.lineCap='round';ctx.strokeStyle=k%2?C.soda:'#B9A6FF';ctx.stroke()}
+    ctx.restore();
+    ctx.beginPath();ctx.arc(0,0,r*.22,0,7);ctx.fillStyle=locked?C.white:C.ink;ctx.fill();
+    ctx.beginPath();ctx.arc(0,0,r,0,7);ctx.lineWidth=lw;ctx.strokeStyle=C.ink;ctx.stroke();
+    const pulse=r*(1.12+.08*Math.sin(now*5+i*3));
+    ctx.beginPath();ctx.arc(0,0,pulse,0,7);ctx.setLineDash([S*.08,S*.07]);ctx.lineWidth=lw*.8;ctx.strokeStyle=C.soda;ctx.stroke();ctx.setLineDash([]);
+    ctx.restore();
+  });
+}
+function drawWasp(x,y,sz,ph,ang){
+  const now=performance.now()/1000,lw=Math.max(1.2,sz*.035);
+  ctx.save();ctx.translate(x,y);ctx.rotate(ang);
+  const fl=Math.sin(now*60+ph)*.5+.5;
+  ctx.fillStyle='rgba(255,253,246,.8)';ctx.strokeStyle=C.ink;ctx.lineWidth=lw;
+  for(const sd of[-1,1]){ctx.beginPath();ctx.ellipse(-sz*.02,sd*sz*.13,sz*.13,sz*(.05+.05*fl),sd*.5,0,7);ctx.fill();ctx.stroke()}
+  ctx.beginPath();ctx.ellipse(0,0,sz*.2,sz*.11,0,0,7);ctx.fillStyle=C.paper;ctx.fill();
+  ctx.save();ctx.clip();ctx.fillStyle=C.ink;for(const sx of[-.1,0,.1].map(v=>v*sz))ctx.fillRect(sx-sz*.025,-sz,sz*.05,sz*2);ctx.restore();
+  ctx.stroke();
+  ctx.beginPath();ctx.moveTo(-sz*.2,0);ctx.lineTo(-sz*.28,0);ctx.stroke();
+  ctx.beginPath();ctx.arc(sz*.2,0,sz*.07,0,7);ctx.fillStyle=C.ink;ctx.fill();
+  ctx.restore();
+}
+function drawNest(){
+  const ne=st.nest;if(!ne)return;const now=performance.now()/1000,x=X(ne.x),y=Y(ne.y),r=S*.3,lw=Math.max(2,S*.05);
+  ctx.beginPath();ctx.ellipse(x+S*.05,y+S*.12,r*.9,r*.35,0,0,7);ctx.fillStyle='rgba(22,18,15,.25)';ctx.fill();
+  const sh=ne.stirred?Math.sin(now*50)*S*.05:0;
+  ctx.save();ctx.translate(x+sh,y+Math.sin(now*2)*S*.02);
+  ctx.beginPath();ctx.ellipse(0,0,r*.85,r,0,0,7);ctx.fillStyle='#D9B98A';ctx.fill();
+  ctx.save();ctx.clip();ctx.strokeStyle='#A9875A';ctx.lineWidth=lw;
+  for(let k=-3;k<=3;k++){ctx.beginPath();ctx.ellipse(0,k*r*.3,r,r*.12,0,0,Math.PI);ctx.stroke()}ctx.restore();
+  ctx.beginPath();ctx.ellipse(0,0,r*.85,r,0,0,7);ctx.lineWidth=lw;ctx.strokeStyle=C.ink;ctx.stroke();
+  ctx.beginPath();ctx.ellipse(0,r*.45,r*.22,r*.16,0,0,7);ctx.fillStyle=C.ink;ctx.fill();
+  ctx.restore();
+  if(!st.wasps.length&&ne.cool<=0){   // one guard circling the nest
+    const a=now*2.2;drawWasp(x+Math.cos(a)*S*.42,y+Math.sin(a)*S*.3,S*.9,0,a+Math.PI/2);
+  }
+}
+function holePos(){
+  if(!st.holeFrom||st.holeT>=1)return st.hole;
+  const k=st.holeT,e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2,a=st.holeFrom,b=st.hole;
+  return{x:a.x+(b.x-a.x)*e,y:a.y+(b.y-a.y)*e,lift:Math.sin(k*Math.PI)};
+}
+function drawDot(){
+  const d=st.dot;if(!d)return;const now=performance.now()/1000,x=X(d.x),y=Y(d.y),r=S*.17,lw=Math.max(2,S*.05),pu=.5+.5*Math.sin(now*4);
+  ctx.beginPath();ctx.arc(x,y,r*(1.5+.35*pu),0,7);ctx.lineWidth=lw*.8;ctx.strokeStyle='rgba(46,232,107,'+(.75-.5*pu)+')';ctx.stroke();
+  ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fillStyle='#2EE86B';ctx.fill();ctx.lineWidth=lw;ctx.strokeStyle=C.ink;ctx.stroke();
+  ctx.beginPath();ctx.ellipse(x-r*.35,y-r*.38,r*.3,r*.2,-.6,0,7);ctx.fillStyle=C.white;ctx.fill();
+}
+function drawHole(){
+  if(st.pit)pitAt(X(st.pit.x),Y(st.pit.y),HOLE_R*S);
+  const hp=holePos();pitAt(X(hp.x),Y(hp.y)-(hp.lift||0)*S*.5,HOLE_R*S*(1-(hp.lift||0)*.35));
+}
+function pitAt(x,y,r){
+  ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fillStyle=C.ink;ctx.fill();
+  ctx.save();ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.clip();
+  ctx.beginPath();ctx.arc(x+r*.25,y+r*.3,r*.95,0,7);ctx.fillStyle='#4a3a2a';ctx.fill();   // lit inner wall
+  ctx.beginPath();ctx.arc(x+r*.08,y+r*.12,r*.78,0,7);ctx.fillStyle=C.ink;ctx.fill();
+  ctx.restore();
+  ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.lineWidth=Math.max(2.5,S*.06);ctx.strokeStyle=C.ink;ctx.stroke();
+}
+function drawFlag(){
+  const hp=holePos(),x=X(hp.x),y=Y(hp.y)-(hp.lift||0)*S*.5,len=S*.95,tx=x+S*.12,ty=y-len,now=performance.now()/1000;
+  const lw=Math.max(2,S*.05);
+  ctx.lineCap='round';ctx.strokeStyle=C.ink;ctx.lineWidth=lw+3;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(tx,ty);ctx.stroke();
+  ctx.strokeStyle=C.white;ctx.lineWidth=lw;ctx.stroke();
+  const fw=S*.55,fh=S*.32,wv=Math.sin(now*6)*S*.05;
+  ctx.beginPath();ctx.moveTo(tx,ty);ctx.quadraticCurveTo(tx+fw*.5,ty+wv,tx+fw,ty+fh*.5+wv*.5);ctx.quadraticCurveTo(tx+fw*.5,ty+fh*.5-wv,tx+lw*.2,ty+fh);ctx.closePath();
+  ctx.fillStyle=C.pop;ctx.fill();ctx.lineWidth=Math.max(2,S*.045);ctx.lineJoin='round';ctx.strokeStyle=C.ink;ctx.stroke();
+}
+function drawShears(){
+  const now=performance.now()/1000;
+  for(const sh of st.shears){
+    if(sh.taken)continue;
+    const x=X(sh.x),y=Y(sh.y)+Math.sin(now*3+sh.ph)*S*.04,L=S*.44,w=S*.13,a=.22+.14*Math.max(0,Math.sin(now*7+sh.ph));
+    const lw=Math.max(1.5,S*.04);
+    ctx.save();ctx.translate(x,y);
+    ctx.save();ctx.rotate(now*.8);star(0,0,S*.48,S*.32,9);ctx.fillStyle=C.paper;ctx.fill();ctx.lineWidth=lw;ctx.strokeStyle=C.ink;ctx.lineJoin='round';ctx.stroke();ctx.restore();
+    ctx.rotate(Math.sin(now*2+sh.ph)*.15);ctx.lineJoin='round';
+    for(const sd of[-1,1]){
+      ctx.save();ctx.rotate(sd*a);
+      // blade up, handle loop down
+      ctx.beginPath();ctx.moveTo(-sd*w*.55,w*.3);ctx.lineTo(-sd*w*.15,-L);ctx.lineTo(sd*w*.55,-L*.25);ctx.lineTo(sd*w*.45,w*.3);ctx.closePath();
+      ctx.fillStyle='#DCE6EC';ctx.fill();ctx.lineWidth=lw;ctx.strokeStyle=C.ink;ctx.stroke();
+      ctx.beginPath();ctx.moveTo(-sd*w*.05,-L*.85);ctx.lineTo(sd*w*.25,-L*.3);ctx.strokeStyle=C.white;ctx.lineWidth=lw*.8;ctx.stroke();
+      ctx.beginPath();ctx.ellipse(sd*w*.9,L*.55,w*.85,w*1.1,sd*.3,0,7);ctx.ellipse(sd*w*.9,L*.55,w*.4,w*.6,sd*.3,0,7,true);
+      ctx.fillStyle=C.pop;ctx.fill('evenodd');ctx.strokeStyle=C.ink;ctx.lineWidth=lw;ctx.stroke();
+      ctx.beginPath();ctx.moveTo(sd*w*.3,w*.2);ctx.lineTo(sd*w*.6,L*.2);ctx.lineWidth=w*.7;ctx.strokeStyle=C.ink;ctx.stroke();ctx.lineWidth=w*.35;ctx.strokeStyle=C.pop;ctx.stroke();
+      ctx.restore();
+    }
+    ctx.beginPath();ctx.arc(0,0,w*.32,0,7);ctx.fillStyle=C.paper;ctx.fill();ctx.lineWidth=lw*.8;ctx.strokeStyle=C.ink;ctx.stroke();
+    ctx.restore();
+  }
+}
+function caterpillar(x,y,sz,ph,munch){
+  const now=performance.now()/1000,r=sz*.13,lw=Math.max(sz<S*.5?.8:1.3,sz*.05);
+  ctx.save();ctx.translate(x,y);ctx.rotate(Math.sin(ph)*.6);
+  const seg=[];for(let i=0;i<5;i++){const wave=Math.sin(now*(munch?9:5)+ph-i*.9);seg.push([(i-2)*r*1.35+(munch?0:wave*r*.25),wave*r*.45-(i===0?r*.25:0)])}
+  for(let i=4;i>=0;i--){const[sx,sy]=seg[i],rr=i===0?r*1.15:r;
+    ctx.beginPath();ctx.arc(sx,sy,rr,0,7);ctx.fillStyle=i===0?'#F28C28':(i%2?'#C8E84A':'#A8D838');ctx.fill();ctx.lineWidth=lw;ctx.strokeStyle=C.ink;ctx.stroke();
+    if(i){ctx.beginPath();ctx.arc(sx-rr*.2,sy-rr*.25,rr*.28,0,7);ctx.fillStyle='rgba(255,253,246,.7)';ctx.fill()}}
+  const[hx,hy]=seg[0],hr=r*1.15;
+  ctx.strokeStyle=C.ink;ctx.lineWidth=lw;ctx.lineCap='round';
+  for(const sd of[-1,1]){ctx.beginPath();ctx.moveTo(hx-hr*.3,hy-hr*.8);ctx.lineTo(hx-hr*.9+sd*hr*.35,hy-hr*1.7);ctx.stroke();
+    ctx.beginPath();ctx.arc(hx-hr*.9+sd*hr*.35,hy-hr*1.7,lw*1.1,0,7);ctx.fillStyle=C.ink;ctx.fill()}
+  ctx.beginPath();ctx.arc(hx-hr*.35,hy-hr*.15,hr*.32,0,7);ctx.fillStyle=C.white;ctx.fill();ctx.lineWidth=lw*.7;ctx.stroke();
+  ctx.beginPath();ctx.arc(hx-hr*.45,hy-hr*.15,hr*.14,0,7);ctx.fillStyle=C.ink;ctx.fill();
+  const mo=munch?Math.abs(Math.sin(now*9+ph)):.3;
+  ctx.beginPath();ctx.ellipse(hx-hr*.6,hy+hr*.4,hr*.22,hr*.1+hr*.2*mo,0,0,7);ctx.fillStyle=C.ink;ctx.fill();
+  ctx.restore();
+}
+function drawCaters(){
+  const now=performance.now()/1000;
+  for(const ca of st.caters){if(ca.taken)continue;
+    const x=X(ca.x)+Math.sin(now*.9+ca.ph)*S*.08,y=Y(ca.y);
+    ctx.beginPath();ctx.ellipse(x+S*.03,y+S*.1,S*.3,S*.08,0,0,7);ctx.fillStyle='rgba(22,18,15,.2)';ctx.fill();
+    caterpillar(x,y,S,ca.ph*0+Math.sin(now*.9+ca.ph)*.3,false)}
+  for(const mu of st.munchers)if(!(mu.delay>0))caterpillar(X(mu.x),Y(mu.y),S*mu.sz,mu.ph,true);
+}
+
+    function drawFloor(){
+      const m=st.maze;ctx=FL.g;
+      ctx.fillStyle=lawnPat;ctx.fillRect(0,0,FW,FH);
+      ctx.fillStyle='rgba(22,18,15,.25)';ctx.fillRect(X(0)+4,Y(0)+5,m.cols*S,m.rows*S);
+      ctx.fillStyle=pathPat;ctx.fillRect(X(0),Y(0),m.cols*S,m.rows*S);
+      // shadow of the hedges and an inked rim where they come out of the ground
+      const R=st.t/2;
+      const segs=(w,col,dx,dy)=>{ctx.lineCap='round';ctx.lineWidth=w;ctx.strokeStyle=col;ctx.beginPath();for(const s of m.segs){ctx.moveTo(X(s.x1)+dx,Y(s.y1)+dy);ctx.lineTo(X(s.x2)+dx,Y(s.y2)+dy)}ctx.stroke()};
+      segs((2*R*1.35+.12)*S,'rgba(22,18,15,.28)',S*.1,S*.14);
+      segs((2*R*1.3)*S,C.ink,0,0);
+      drawHole();drawTele();drawDot();drawShears();drawCaters();drawNest();
+      const b=st.ball;
+      if(st.mode!=='sink'&&b.scale>0){ctx.beginPath();ctx.ellipse(X(b.x)+S*.09,Y(b.y)+S*.12,BALL_R*S*.95,BALL_R*S*.8,0,0,7);ctx.fillStyle='rgba(22,18,15,.32)';ctx.fill()}
+      for(const p of st.parts)if(p.type==='spark'){const k=p.t/p.life;ctx.strokeStyle=C.soda;ctx.lineWidth=3;ctx.lineCap='round';ctx.globalAlpha=1-k;ctx.beginPath();ctx.moveTo(X(p.x),Y(p.y));ctx.lineTo(X(p.x)-p.vx*S*.06,Y(p.y)-p.vy*S*.06);ctx.stroke();ctx.globalAlpha=1}
+      for(const w of st.wasps)if(!w.gone){
+        ctx.beginPath();ctx.ellipse(X(w.x)+S*.15,Y(w.y)+S*.25,S*.16,S*.08,0,0,7);ctx.fillStyle='rgba(22,18,15,.2)';ctx.fill();
+        drawWasp(X(w.x),Y(w.y),S*1.05,w.ph,Math.atan2(w.vy,w.vx));
+      }
+      FL.t.needsUpdate=true;
+    }
+    let topDirty=true;
+    function drawTop(){
+      const pp=st.parts.filter(p=>p.type!=='spark');
+      if(!pp.length&&!topDirty)return;
+      ctx=TOP.g;ctx.clearRect(0,0,FW,FH);topDirty=pp.length>0;
+      for(const p of pp){
+        const k=p.t/p.life,py=Y(p.y);let px=X(p.x);
+        if(p.type==='leaf'){
+          ctx.save();ctx.translate(px,py);ctx.rotate(p.rot);ctx.globalAlpha=1-Math.max(0,k-.6)/.4;
+          ctx.beginPath();ctx.ellipse(0,0,S*.09,S*.045,0,0,7);ctx.fillStyle=C.leaf;ctx.fill();ctx.lineWidth=1.5;ctx.strokeStyle=C.ink;ctx.stroke();ctx.restore();continue;
+        }
+        if(p.type==='gain'){ctx.save();ctx.globalAlpha=1-Math.max(0,k-.7)/.3;inkText(p.text,px,py-S*.6-k*S*.8,Math.max(16,S*.5),C.paper,.05);ctx.restore();continue}
+        const sc=Math.min(1,k*5)*(1-k*.3),R=Math.max(18,S*.8)*sc,yy=py-S*.4-k*S*.4;
+        px=Math.max(R*1.3,Math.min(FW-R*1.3,px));
+        ctx.save();ctx.globalAlpha=1-Math.max(0,k-.7)/.3;
+        star(px,yy,R,R*.62,10);ctx.fillStyle=p.col===C.white?C.paper:C.white;ctx.fill();ctx.lineWidth=3;ctx.strokeStyle=C.ink;ctx.stroke();
+        inkText(p.text,px,yy,R*.5+1,p.col===C.white?C.pop:C.hedge,p.rot);ctx.restore();
+      }
+      TOP.t.needsUpdate=true;
+    }
+
+    // =====================================================================
+    // three.js scene
+    // =====================================================================
+    const scene=new THREE.Scene();
+    const camera=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,0.01,20);
+    const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true,powerPreference:'high-performance'});
+    renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+    renderer.setSize(innerWidth,innerHeight);
+    renderer.xr.enabled=true;
+    renderer.xr.setReferenceSpaceType('local');
+    renderer.xr.setFoveation(1);
+    renderer.xr.setFramebufferScaleFactor(0.65); // same as the other experiments: smooth on Spectacles
+    document.body.appendChild(renderer.domElement);
+    scene.add(new THREE.HemisphereLight(0xffffff,0x4a5a3a,1.3));
+    const sun=new THREE.DirectionalLight(0xffffff,1.7);sun.position.set(-.4,1,.6);scene.add(sun);
+
+    // comic shading: three flat tones
+    const toonRamp=new THREE.DataTexture(new Uint8Array([90,90,90,255,170,170,170,255,255,255,255,255]),3,1);
+    toonRamp.minFilter=toonRamp.magFilter=THREE.NearestFilter;toonRamp.needsUpdate=true;
+    const toon=(color,extra)=>new THREE.MeshToonMaterial(Object.assign({color,gradientMap:toonRamp},extra||{}));
+
+    // board (placed, turned to face you) > tilt (follows your head) > maze (in cell units)
+    const board=new THREE.Group(),tiltG=new THREE.Group(),mazeG=new THREE.Group(),hedgeG=new THREE.Group();
+    tiltG.position.y=LIFT;board.add(tiltG);tiltG.add(mazeG);mazeG.add(hedgeG);scene.add(board);
+    const stand=new THREE.Mesh(new THREE.CylinderGeometry(.018,.03,LIFT,16),toon(0x6b4a2a));stand.position.y=LIFT/2;board.add(stand);
+
+    const unitPlane=new THREE.PlaneGeometry(1,1).rotateX(-Math.PI/2);
+    const floor=new THREE.Mesh(unitPlane,new THREE.MeshBasicMaterial({map:FL.t}));mazeG.add(floor);
+    const topLayer=new THREE.Mesh(unitPlane,new THREE.MeshBasicMaterial({map:TOP.t,transparent:true,depthWrite:false}));topLayer.renderOrder=5;mazeG.add(topLayer);
+    const slab=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),toon(0x3d7a2c));mazeG.add(slab);
+    const SLAB=.3;   // board thickness in cells
+
+    // ball: red marble with two white spots, inked outline
+    const ballTex=(()=>{const c=document.createElement('canvas');c.width=256;c.height=128;const g=c.getContext('2d');
+      g.fillStyle=C.pop;g.fillRect(0,0,256,128);g.fillStyle=C.white;
+      for(const[x,y]of[[64,64],[192,44],[192,100]]){g.beginPath();g.ellipse(x,y,20,17,0,0,7);g.fill()}
+      const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;return t})();
+    const ball=new THREE.Group();
+    const ballMesh=new THREE.Mesh(new THREE.SphereGeometry(BALL_R,24,16),toon(0xffffff,{map:ballTex}));
+    const ballInk=new THREE.Mesh(new THREE.SphereGeometry(BALL_R*1.12,16,12),new THREE.MeshBasicMaterial({color:C.ink,side:THREE.BackSide}));
+    ball.add(ballMesh,ballInk);mazeG.add(ball);
+
+    // flag on the real hole
+    const flag=new THREE.Group();
+    {
+      const pole=new THREE.Mesh(new THREE.CylinderGeometry(.025,.025,1,8),toon(0xFFFDF6));pole.position.y=.5;flag.add(pole);
+      const poleInk=new THREE.Mesh(new THREE.CylinderGeometry(.045,.045,1.02,8),new THREE.MeshBasicMaterial({color:C.ink,side:THREE.BackSide}));poleInk.position.y=.5;flag.add(poleInk);
+      const sh=new THREE.Shape();sh.moveTo(0,0);sh.quadraticCurveTo(.3,.03,.55,-.16);sh.quadraticCurveTo(.3,-.18,0,-.32);sh.lineTo(0,0);
+      const cloth=new THREE.Mesh(new THREE.ShapeGeometry(sh),new THREE.MeshBasicMaterial({color:C.pop,side:THREE.DoubleSide}));
+      const pts=sh.getPoints(16);const edge=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:C.ink}));
+      const fw=new THREE.Group();fw.add(cloth,edge);fw.position.y=1;flag.add(fw);flag.userData.cloth=fw;
+    }
+    mazeG.add(flag);
+
+    // hedges: a box along every wall run, round bushes on top, flowers here and there
+    const blobGeo=new THREE.IcosahedronGeometry(1,1),boxGeo=new THREE.BoxGeometry(1,1,1),flowerGeo=new THREE.IcosahedronGeometry(1,0);
+    const hedgeMat=toon(0xffffff),boxMat=toon(0x26843f),flowerMat=toon(0xffffff);
+    let blobsIM=null,boxesIM=null,flowersIM=null,hblobs=[],hflowers=[],drawnT=-1;
+    const dummy=new THREE.Object3D(),tmpCol=new THREE.Color();
+    function buildHedges(m){
+      for(const im of[blobsIM,boxesIM,flowersIM])if(im){hedgeG.remove(im);im.dispose()}
+      hblobs=[];hflowers=[];
+      for(const s of m.segs){
+        const L=Math.hypot(s.x2-s.x1,s.y2-s.y1),n=Math.max(1,Math.round(L*3)),nx=(s.y2-s.y1)/L,ny=-(s.x2-s.x1)/L;
+        for(let i=0;i<=n;i++){const t=i/n;
+          const b={x:s.x1+(s.x2-s.x1)*t,y:s.y1+(s.y2-s.y1)*t,nx,ny,o:(Math.random()-.5)*.45,k:.92+Math.random()*.32,hk:.75+Math.random()*.5};
+          hblobs.push(b);
+          if(Math.random()<.13)hflowers.push({b,a:Math.random()*7,c:[C.pop,C.white,C.paper,'#F59AC2'][Math.random()*4|0]});
+        }
+      }
+      blobsIM=new THREE.InstancedMesh(blobGeo,hedgeMat,hblobs.length);
+      hblobs.forEach((b,i)=>blobsIM.setColorAt(i,tmpCol.set(C.hedge).lerp(new THREE.Color(C.leaf),Math.random()<.6?.25+Math.random()*.2:Math.random()*.1)));
+      boxesIM=new THREE.InstancedMesh(boxGeo,boxMat,m.segs.length);
+      flowersIM=new THREE.InstancedMesh(flowerGeo,flowerMat,Math.max(1,hflowers.length));
+      hflowers.forEach((f,i)=>flowersIM.setColorAt(i,tmpCol.set(f.c)));
+      if(!hflowers.length){dummy.scale.setScalar(0);dummy.updateMatrix();flowersIM.setMatrixAt(0,dummy.matrix)}
+      for(const im of[blobsIM,boxesIM,flowersIM]){im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);hedgeG.add(im)}
+      drawnT=-1;
+    }
+    // t = hedge thickness (cells). They also grow in height, so they come up out of the board.
+    function updateHedges(){
+      const m=st.maze,t=st.t;if(Math.abs(t-drawnT)<.003)return;drawnT=t;
+      const R=t/2,Hh=.28+.95*t;
+      dummy.rotation.set(0,0,0);
+      m.segs.forEach((s,i)=>{const L=Math.hypot(s.x2-s.x1,s.y2-s.y1),hz=s.y1===s.y2,hb=Hh-R*.5;
+        dummy.position.set((s.x1+s.x2)/2,hb/2,(s.y1+s.y2)/2);dummy.scale.set(hz?L:2*R*.95,hb,hz?2*R*.95:L);dummy.updateMatrix();boxesIM.setMatrixAt(i,dummy.matrix)});
+      hblobs.forEach((b,i)=>{const r=Math.max(.02,R*b.k),x=b.x+b.nx*R*b.o,y=b.y+b.ny*R*b.o;
+        dummy.position.set(x,Hh-r*.55*b.hk,y);dummy.scale.set(r,r*.9*b.hk,r);dummy.updateMatrix();blobsIM.setMatrixAt(i,dummy.matrix)});
+      hflowers.forEach((f,i)=>{const b=f.b,r=Math.max(.02,R*b.k),fr=Math.min(.09,r*.32),x=b.x+b.nx*R*b.o,y=b.y+b.ny*R*b.o;
+        dummy.position.set(x+Math.cos(f.a)*r*.5,Hh-r*.55*b.hk+r*.75*b.hk,y+Math.sin(f.a)*r*.5);dummy.scale.setScalar(fr<.03?0:fr);dummy.updateMatrix();flowersIM.setMatrixAt(i,dummy.matrix)});
+      for(const im of[blobsIM,boxesIM,flowersIM])im.instanceMatrix.needsUpdate=true;
+    }
+
+    // every new maze: new board size, new layers, new hedges
+    let cs=.1,bw=.6,bd=.6;
+    function onNewMaze(){
+      const m=st.maze;
+      cs=BOARD_W/m.cols;bw=(m.cols+2*PADC)*cs;bd=(m.rows+2*PADC)*cs;
+      mazeG.scale.setScalar(cs);mazeG.position.set(-m.cols*cs/2,SLAB*cs,-m.rows*cs/2);
+      const ww=m.cols+2*PADC,dd=m.rows+2*PADC;
+      floor.scale.set(ww,1,dd);floor.position.set(m.cols/2,0,m.rows/2);
+      topLayer.scale.set(ww,1,dd);topLayer.position.set(m.cols/2,1.25,m.rows/2);
+      slab.scale.set(ww,SLAB,dd);slab.position.set(m.cols/2,-SLAB/2-.002,m.rows/2);
+      // texture resolution: keep it low so it stays smooth on glasses
+      S=Math.min(56,Math.floor(560/Math.max(ww,dd)));FW=Math.round(ww*S);FH=Math.round(dd*S);
+      for(const L of[FL,TOP]){L.c.width=FW;L.c.height=FH;L.t.dispose()}
+      lawnPat=mkPattern(FL.g,C.lawn,'rgba(22,18,15,.13)',12,2);
+      pathPat=mkPattern(FL.g,C.path,'rgba(160,110,40,.28)',9,1.5);
+      topDirty=true;
+      buildHedges(m);
+      layoutPanel();updateReticleSize();
+      if(!inAR)framePreview();
+    }
+
+    // =====================================================================
+    // Panel behind the board: score strip, banners and the menus
+    // (DOM text isn't visible on glasses, so everything is drawn here)
+    // =====================================================================
+    const PW=640,PH=360,PANEL_W=.44;
+    const PN=mkLayer();PN.c.width=PW;PN.c.height=PH;
+    const panel=new THREE.Mesh(new THREE.PlaneGeometry(PANEL_W,PANEL_W*PH/PW),new THREE.MeshBasicMaterial({map:PN.t,transparent:true,depthWrite:false}));
+    panel.renderOrder=6;board.add(panel);
+    function layoutPanel(){panel.position.set(0,LIFT+.035+PANEL_W*PH/PW/2,-bd/2-.03);panel.rotation.x=-.18}
+    let panelKey='';
+    function pText(g,s,x,y,size,fill,rot=0,align='center'){
+      g.save();g.translate(x,y);g.rotate(rot);g.font=`${size}px ${FONT_D}`;g.textAlign=align;g.textBaseline='middle';
+      g.lineJoin='round';g.lineWidth=size*.16;g.strokeStyle=C.ink;g.fillStyle=C.ink;g.fillText(s,size*.06,size*.06);g.strokeText(s,0,0);g.fillStyle=fill;g.fillText(s,0,0);g.restore();
+    }
+    function chip(g,x,y,w,h,txt,bg){
+      g.fillStyle=C.ink;g.fillRect(x+5,y+5,w,h);g.fillStyle=bg||C.white;g.fillRect(x,y,w,h);g.lineWidth=4;g.strokeStyle=C.ink;g.strokeRect(x,y,w,h);
+      if(txt){g.font=`${h*.72}px ${FONT_D}`;g.fillStyle=C.ink;g.textAlign='center';g.textBaseline='middle';g.fillText(txt,x+w/2,y+h/2+2)}
+    }
+    function card(g,lines,titleCol){
+      // lines: [text, size, colour]
+      const h=lines.reduce((s,l)=>s+l[1]*1.12,26),w=PW-60,x=30,y=Math.max(8,(PH-h)/2);
+      g.save();g.translate(PW/2,PH/2);g.rotate(-.015);g.translate(-PW/2,-PH/2);
+      g.fillStyle=C.ink;g.fillRect(x+8,y+8,w,h);g.fillStyle=C.white;g.fillRect(x,y,w,h);g.lineWidth=5;g.strokeStyle=C.ink;g.strokeRect(x,y,w,h);
+      let yy=y+14;
+      lines.forEach(([s,size,col],i)=>{
+        let fs=size;g.font=`${fs}px ${FONT_D}`;while(g.measureText(s).width>w-30&&fs>14){fs-=2;g.font=`${fs}px ${FONT_D}`}
+        if(i===0)pText(g,s,PW/2,yy+size*.55,fs,titleCol);
+        else{g.fillStyle=col||C.ink;g.textAlign='center';g.textBaseline='middle';g.fillText(s,PW/2,yy+size*.55)}
+        yy+=size*1.12;
+      });
+      g.restore();
+    }
+    function inputWord(){return inAR?(handsSeen?T.pinch:T.tap):T.key}
+    const sub=s=>s.replace('$',inputWord());
+    function drawPanel(){
+      const blink=Math.floor(clock*2.5)%2;
+      const bn=st&&st.banner;
+      const key=[appState,inAR,handsSeen,diff,startLvl,reached(),blink,st&&st.level,st&&st.score,st?Math.round((st.p||0)*120):0,bn&&bn.text,bn&&Math.round((bn.max-bn.t)*30)].join('|');
+      if(key===panelKey)return;panelKey=key;
+      const g=PN.g;g.clearRect(0,0,PW,PH);
+      if(appState==='place'){PN.t.needsUpdate=true;return}
+      if(appState==='game'){
+        const p=st.mode==='over'?1:st.p||0;
+        chip(g,20,16,120,46,T.lvl(st.level));
+        chip(g,156,16,150,46,T.pts(st.score));
+        g.font=`20px ${FONT_D}`;g.fillStyle=C.white;g.textAlign='left';g.textBaseline='alphabetic';
+        g.lineJoin='round';g.lineWidth=4;g.strokeStyle=C.ink;g.strokeText(T.grow,326,30);g.fillText(T.grow,326,30);
+        chip(g,326,36,PW-346,26,'',C.white);
+        g.fillStyle=p>=.8&&st.mode==='play'&&blink?C.pop:p>=.8?'#ff6b5e':C.hedge;g.fillRect(328,38,(PW-350)*p,22);
+        if(bn){const k=Math.min(1,(bn.max-bn.t)*6);
+          pText(g,bn.text,PW/2,170,(bn.sub?84:96)*k+1,bn.text===T.hurry||bn.text===T.level0?(bn.text===T.hurry?C.pop:C.leaf):C.paper,-.05);
+          if(bn.sub)pText(g,bn.sub,PW/2+10,250,42*k+1,C.white,.03);}
+      }else if(appState==='menu'){
+        const top=reached();
+        const L=[[T.title,76],[T.tiltHint,26],[`${T.startAt} ${startLvl} ${T.of} ${top}  ·  ${T.diff[diff]}`,34,C.hedge],
+          [inAR?T.lvlAR:T.lvlKb,22,'#555'],[inAR?T.diffAR:T.diffKb,22,'#555'],[sub(T.go),44,blink?C.pop:C.ink]];
+        if(inAR)L.push([sub(T.recal),20,'#555'],[T.move,20,'#555']);
+        card(g,L,C.hedge);
+      }else if(appState==='result'){
+        const r=lastResult,top=reached();
+        const L=[[r.reason==='stung'?T.stungT:r.reason==='fell'?T.fellT:T.over,70],[r.reason==='stung'?T.stungP:r.reason==='fell'?T.fellP:T.stuck,26],
+          [T.diff[r.diff]+' · '+T.final(T.pts(r.score),r.level),32,C.ink],[T.best(r.best),22,'#555'],
+          [`${T.startAt} ${startLvl} ${T.of} ${top}  ·  ${T.diff[diff]}`,28,C.hedge],[inAR?T.lvlAR+' · '+T.diffAR:T.lvlKb+' · '+T.diffKb,18,'#555'],[sub(T.again),42,blink?C.pop:C.ink]];
+        if(inAR)L.push([T.move,18,'#555']);
+        card(g,L,C.pop);
+      }
+      PN.t.needsUpdate=true;
+    }
+
+    // =====================================================================
+    // Game flow
+    // =====================================================================
+    function toMenu(){
+      appState='menu';st=fresh();st.mode='start';
+      for(const b of[bag,tbag,wbag,gbag,kbag])b.length=0;
+      newLevel(startLvl||reached());st.banner=null;st.t=T0+.12;
+    }
+    function begin(){
+      st=fresh();for(const b of[bag,tbag,wbag,gbag,kbag])b.length=0;
+      newLevel(startLvl||1);lastResult=null;appState='game';needCal=true;joyOff();
+    }
+    function changeLevel(d){
+      const top=reached(),n=Math.max(1,Math.min(top,(startLvl||top)+d));if(n===startLvl)return;
+      startLvl=n;if(appState==='menu')toMenu();
+    }
+    function changeDiff(d){
+      diff=(diff+d+3)%3;try{localStorage.setItem('irrgarten.diff',diff)}catch(_){}
+      startLvl=reached();if(appState==='menu')toMenu();
+    }
+    function tick(dt){
+      clock+=dt;
+      if(appState==='game'||appState==='menu'||appState==='result')update(dt);
+      if(appState==='game'&&st.mode==='over'&&clock>=resultAt)appState='result';
+    }
+
+    // =====================================================================
+    // Head: tilt (pitch / roll) against the pose you had when the round started
+    // =====================================================================
+    const camPos=new THREE.Vector3(),camQuat=new THREE.Quaternion(),fwd=new THREE.Vector3(),rgt=new THREE.Vector3(),UP=new THREE.Vector3(0,1,0);
+    const fh=new THREE.Vector3(),rh=new THREE.Vector3(),gw=new THREE.Vector3(),invQ=new THREE.Quaternion();
+    let pitch0=0,roll0=0,pitchBase=null,armRoll=true,armNod=true;
+    const dead=a=>Math.sign(a)*Math.max(0,Math.abs(a)-HEAD_DEAD);
+    function headUpdate(dt){
+      fwd.set(0,0,-1).applyQuaternion(camQuat);rgt.set(1,0,0).applyQuaternion(camQuat);
+      const pitch=Math.asin(THREE.MathUtils.clamp(fwd.y,-1,1)),roll=Math.asin(THREE.MathUtils.clamp(rgt.y,-1,1));
+      if(needCal){pitch0=pitch;roll0=roll;needCal=false}
+      // game: head forward = ball rolls away from you, head to the left = ball rolls left (also when you walk around the board)
+      rh.set(rgt.x,0,rgt.z);if(rh.lengthSq()<1e-6)rh.set(1,0,0);rh.normalize();fh.crossVectors(UP,rh);
+      const k=.6/(HEAD_FULL-HEAD_DEAD);
+      gw.copy(fh).multiplyScalar(-dead(pitch-pitch0)*k).addScaledVector(rh,-dead(roll-roll0)*k);
+      board.getWorldQuaternion(invQ).invert();gw.applyQuaternion(invQ);
+      headG.x=gw.x;headG.y=gw.z;
+      // menus: head to the side = level, a nod = difficulty
+      if(appState==='menu'||appState==='result'){
+        const rd=THREE.MathUtils.radToDeg(roll);
+        if(armRoll&&Math.abs(rd)>14){armRoll=false;changeLevel(rd>0?-1:1)}else if(Math.abs(rd)<6)armRoll=true;
+        if(pitchBase==null)pitchBase=pitch;
+        const nd=THREE.MathUtils.radToDeg(pitch-pitchBase);
+        if(armNod&&nd<-14){armNod=false;changeDiff(1)}else if(Math.abs(nd)<5)armNod=true;
+        pitchBase+=(pitch-pitchBase)*Math.min(1,dt*.8);
+      }else pitchBase=null;
+    }
+
+    // board follows the ball's gravity visually
+    let tiltX=0,tiltZ=0;
+    function render3D(dt){
+      const m=st.maze;if(!m)return;
+      updateHedges();
+      let jx=0,jz=0;
+      if(st.mode==='play'&&st.p>.8){const a=(st.p-.8)*.12;jx=(Math.random()-.5)*a;jz=(Math.random()-.5)*a}
+      hedgeG.position.set(jx,0,jz);
+      const g=appState==='game'&&st.mode==='play'?gravity():{x:0,y:0};
+      tiltZ+=(-g.x/.6*MAX_TILT-tiltZ)*Math.min(1,dt*8);tiltX+=(g.y/.6*MAX_TILT-tiltX)*Math.min(1,dt*8);
+      tiltG.rotation.set(tiltX,0,tiltZ);
+      // ball: rolls for real
+      const b=st.ball,sc=Math.max(0,b.scale);
+      ball.visible=sc>.02;ball.scale.setScalar(Math.max(.001,sc));
+      ball.position.set(b.x,BALL_R*sc-(1-sc)*.18,b.y);
+      if(b.px!=null){const dx=b.x-b.px,dz=b.y-b.py,d=Math.hypot(dx,dz);
+        if(d>1e-5&&d<1){rq.setFromAxisAngle(ax.set(dz/d,0,-dx/d),d/BALL_R);ballMesh.quaternion.premultiply(rq)}}
+      b.px=b.x;b.py=b.y;
+      // flag
+      const hp=holePos();flag.position.set(hp.x,(hp.lift||0)*.5,hp.y);flag.scale.setScalar(1-(hp.lift||0)*.35);
+      flag.userData.cloth.rotation.y=Math.sin(clock*6)*.25;
+      drawFloor();drawTop();
+    }
+    const rq=new THREE.Quaternion(),ax=new THREE.Vector3();
+
+    // =====================================================================
+    // Placement: find a table, put the board on it, facing you
+    // =====================================================================
+    let inAR=false,handsSeen=false,hitTestSource=null,hitTestRequested=false,placing=false,onTable=false,reticleFresh=true;
+    const tgtPos=new THREE.Vector3(),tgtQuat=new THREE.Quaternion(),hp3=new THREE.Vector3(),hq=new THREE.Quaternion(),hs=new THREE.Vector3(),nrm=new THREE.Vector3(),m4=new THREE.Matrix4();
+    const reticle=new THREE.Group();
+    const frameMat=new THREE.LineBasicMaterial({color:0xffffff});
+    {
+      const pts=[];const c=.12;
+      for(const[sx,sz]of[[-1,-1],[1,-1],[1,1],[-1,1]])pts.push(sx*.5,0,sz*.5, sx*(.5-c),0,sz*.5, sx*.5,0,sz*.5, sx*.5,0,sz*(.5-c));
+      const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(pts,3));
+      const corners=new THREE.LineSegments(geo,frameMat);reticle.add(corners);reticle.userData.corners=corners;
+      const fill=new THREE.Mesh(unitPlane,new THREE.MeshBasicMaterial({color:0x6CC24A,transparent:true,opacity:.25,depthWrite:false}));reticle.add(fill);reticle.userData.fill=fill;
+    }
+    reticle.visible=false;scene.add(reticle);
+    function updateReticleSize(){for(const k of['corners','fill'])reticle.userData[k].scale.set(bw,1,bd)}
+    function faceCamera(){
+      fwd.subVectors(camPos,tgtPos);fwd.y=0;if(fwd.lengthSq()<1e-6)fwd.set(0,0,1);fwd.normalize();
+      tgtQuat.setFromAxisAngle(UP,Math.atan2(fwd.x,fwd.z));
+    }
+    function targetFromHit(matrix){
+      m4.fromArray(matrix);m4.decompose(hp3,hq,hs);
+      nrm.set(0,1,0).applyQuaternion(hq);
+      if(nrm.y<.75)return false;    // only horizontal surfaces
+      tgtPos.copy(hp3);faceCamera();return true;
+    }
+    function targetFloating(){
+      fwd.set(0,0,-1).applyQuaternion(camQuat);fwd.y=0;if(fwd.lengthSq()<1e-6)fwd.set(0,0,-1);fwd.normalize();
+      tgtPos.copy(camPos).addScaledVector(fwd,.6);tgtPos.y-=.45;faceCamera();
+    }
+    // floating hint label
+    const LABEL_FONT='600 52px system-ui, sans-serif',labelCache={};
+    function labelTex(text){
+      if(labelCache[text])return labelCache[text];
+      const c=document.createElement('canvas'),g=c.getContext('2d');g.font=LABEL_FONT;
+      const h=128,pad=56;c.width=Math.ceil(g.measureText(text).width)+pad*2;c.height=h;g.font=LABEL_FONT;
+      g.fillStyle='rgba(0,0,0,0.55)';g.beginPath();g.roundRect(4,4,c.width-8,h-8,(h-8)/2);g.fill();
+      g.fillStyle='#fff';g.textAlign='center';g.textBaseline='middle';g.fillText(text,c.width/2,h/2+2);
+      const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;t.userData.aspect=c.width/h;
+      return labelCache[text]=t;
+    }
+    const label=new THREE.Sprite(new THREE.SpriteMaterial({depthTest:false,transparent:true}));
+    label.renderOrder=10;label.visible=false;scene.add(label);
+    function setLabel(text){const t=labelTex(text);if(label.material.map===t)return;label.material.map=t;label.material.needsUpdate=true;label.scale.set(.04*t.userData.aspect,.04,1)}
+
+    function startPlacing(){appState='place';placing=true;board.visible=false;reticle.visible=true;reticleFresh=true;hitTestRequested=false}
+    function placeBoard(){
+      board.position.copy(reticle.position);board.quaternion.copy(reticle.quaternion);board.visible=true;
+      reticle.visible=false;label.visible=false;placing=false;
+      if(hitTestSource){hitTestSource.cancel();hitTestSource=null}
+      toMenu();
+    }
+    async function requestHitTest(session){
+      const space=await session.requestReferenceSpace('viewer');
+      try{return await session.requestHitTestSource({space,entityTypes:['plane']})}
+      catch(e){return await session.requestHitTestSource({space})}
+    }
+    function updatePlacing(frame){
+      const session=renderer.xr.getSession(),ref=renderer.xr.getReferenceSpace();
+      if(!hitTestRequested){hitTestRequested=true;requestHitTest(session).then(s=>{if(placing)hitTestSource=s;else s.cancel()}).catch(()=>{})}
+      let hit=false;
+      if(hitTestSource){
+        for(const h of frame.getHitTestResults(hitTestSource)){const pose=h.getPose(ref);if(pose&&targetFromHit(pose.transform.matrix)){hit=true;break}}
+      }
+      onTable=hit;if(!hit)targetFloating();
+      if(reticleFresh){reticle.position.copy(tgtPos);reticle.quaternion.copy(tgtQuat);reticleFresh=false}
+      else{reticle.position.lerp(tgtPos,.25);reticle.quaternion.slerp(tgtQuat,.25)}
+      frameMat.color.set(onTable?0x7CFF9A:0xffffff);
+      label.visible=true;label.position.copy(reticle.position).addScaledVector(UP,.12);
+      setLabel((onTable?T.place:T.placeAir).replace('$',handsSeen?T.pinchL:T.tapL));
+    }
+
+    // --- Preview (no AR): board in front of the camera, seen from above at an angle ---
+    function framePreview(){
+      board.position.set(0,0,0);board.quaternion.identity();board.visible=true;
+      const tan=Math.tan(THREE.MathUtils.degToRad(camera.fov/2)),span=Math.max(bd+.3,(bw+.06)/camera.aspect);
+      const d=span/(2*tan)*1.05;
+      camera.position.set(0,d*.78,d*.62);camera.lookAt(0,.06,-.03);
+    }
+
+    // =====================================================================
+    // Input: pinch / screen tap / space = the button
+    // =====================================================================
+    let holding=false,holdT=0,swallow=false,downState='';
+    function down(){
+      if(holding)return;holding=true;holdT=0;downState=appState;
+      if(appState==='place'){placeBoard();swallow=true;return}
+      if(appState==='game'){
+        if(inAR&&st.mode==='play'){needCal=true;st.banner={text:T.level0,t:.9,max:.9}}
+        swallow=true;return;
+      }
+    }
+    function up(){
+      if(!holding)return;holding=false;
+      if(swallow){swallow=false;return}
+      if((appState==='menu'||appState==='result')&&downState===appState&&clock-resultAt>.5)begin();
+    }
+    function holdTick(dt){
+      if(!holding)return;holdT+=dt;
+      if(inAR&&holdT>1.2&&(appState==='menu'||appState==='result')){swallow=true;startPlacing()}
+    }
+    // hands: pinch = press, open = release
+    const PINCH_ON=0.015,PINCH_OFF=0.03;
+    const hands=[0,1].map(i=>{
+      const hand=renderer.xr.getHand(i);scene.add(hand);
+      const dot=new THREE.Mesh(new THREE.SphereGeometry(0.006,10,6),new THREE.MeshBasicMaterial({color:0xffffff}));
+      dot.visible=false;scene.add(dot);
+      return{hand,dot,pinching:false};
+    });
+    const tip=new THREE.Vector3(),thumb=new THREE.Vector3();
+    let pinchCount=0;
+    function updateHands(){
+      for(const h of hands){
+        const it=h.hand.joints['index-finger-tip'],tt=h.hand.joints['thumb-tip'];
+        if(!it||!tt||!it.visible||!tt.visible){h.dot.visible=false;if(h.pinching){h.pinching=false;if(--pinchCount===0)up()}continue}
+        handsSeen=true;
+        it.getWorldPosition(tip);tt.getWorldPosition(thumb);
+        const d=tip.distanceTo(thumb);
+        h.dot.position.copy(tip).add(thumb).multiplyScalar(0.5);h.dot.visible=true;
+        h.dot.material.color.set(d<PINCH_OFF?0xFFD93B:0xffffff);
+        if(!h.pinching&&d<PINCH_ON){h.pinching=true;if(pinchCount++===0)down()}
+        else if(h.pinching&&d>PINCH_OFF){h.pinching=false;if(--pinchCount===0)up()}
+      }
+    }
+    for(let i=0;i<2;i++){
+      const c=renderer.xr.getController(i);
+      c.addEventListener('selectstart',e=>{if(e.data&&e.data.hand)return;down()});
+      c.addEventListener('selectend',e=>{if(e.data&&e.data.hand)return;up()});
+      scene.add(c);
+    }
+    // preview: drag = tilt (like the original without motion sensor), click / space = button, arrows = tilt or menu
+    const el=renderer.domElement;
+    el.addEventListener('pointerdown',e=>{
+      if(inAR)return;e.preventDefault();
+      if(appState==='game'&&st.mode==='play'){joy.on=true;joy.ox=e.clientX;joy.oy=e.clientY;joy.x=joy.y=0;try{el.setPointerCapture(e.pointerId)}catch(_){}}
+      else down();
+    });
+    el.addEventListener('pointermove',e=>{
+      if(!joy.on)return;let dx=(e.clientX-joy.ox)/60,dy=(e.clientY-joy.oy)/60;const L=Math.hypot(dx,dy);if(L>1){dx/=L;dy/=L}joy.x=dx;joy.y=dy;
+    });
+    function joyOff(){joy.on=false;joy.x=joy.y=0}
+    addEventListener('pointerup',()=>{if(inAR)return;joyOff();up()});
+    addEventListener('pointercancel',()=>{if(inAR)return;joyOff();up()});
+    addEventListener('keydown',e=>{
+      if(inAR)return;const k=e.key.length===1?e.key.toLowerCase():e.key;
+      if(appState==='game'){if(/^Arrow|^[wasd]$/.test(k)){keys[k]=true;e.preventDefault()}return}
+      if(e.repeat)return;
+      if(e.code==='Space'||e.code==='Enter'){e.preventDefault();down()}
+      else if(k==='ArrowLeft'||k==='a'){e.preventDefault();changeLevel(-1)}
+      else if(k==='ArrowRight'||k==='d'){e.preventDefault();changeLevel(1)}
+      else if(k==='ArrowUp'||k==='w'){e.preventDefault();changeDiff(-1)}
+      else if(k==='ArrowDown'||k==='s'){e.preventDefault();changeDiff(1)}
+    });
+    addEventListener('keyup',e=>{const k=e.key.length===1?e.key.toLowerCase():e.key;keys[k]=false;if(!inAR&&(e.code==='Space'||e.code==='Enter'))up()});
+    addEventListener('blur',()=>{for(const k in keys)keys[k]=false;joyOff()});
+
+    // =====================================================================
+    // Start
+    // =====================================================================
+    toMenu();
+
+    if(navigator.xr&&await navigator.xr.isSessionSupported('immersive-ar').catch(()=>false))info.innerHTML=T.ok;
+    else info.innerHTML=T.noAr;
+    document.getElementById('bar').appendChild(ARButton.createButton(renderer,{
+      optionalFeatures:['hit-test','hand-tracking','dom-overlay'],
+      domOverlay:{root:document.body}
+    }));
+    renderer.xr.addEventListener('sessionstart',()=>{
+      inAR=true;document.body.classList.add('ar');info.textContent=T.inAr;
+      holding=false;swallow=false;pinchCount=0;joyOff();
+      startPlacing();
+    });
+    renderer.xr.addEventListener('sessionend',()=>{
+      inAR=false;placing=false;document.body.classList.remove('ar');
+      reticle.visible=false;label.visible=false;
+      if(hitTestSource){try{hitTestSource.cancel()}catch(_){}hitTestSource=null}
+      holding=false;swallow=false;
+      toMenu();framePreview();info.innerHTML=T.ok;
+    });
+
+    let lastT=0;
+    renderer.setAnimationLoop((t,frame)=>{
+      const dt=lastT?Math.min(.05,Math.max(0,(t-lastT)/1000)):0;lastT=t;
+      if(frame){
+        updateHands();
+        const cam=renderer.xr.getCamera();cam.getWorldPosition(camPos);cam.getWorldQuaternion(camQuat);
+        if(placing)updatePlacing(frame);else headUpdate(dt);
+        if(appState!=='place')info.textContent='';
+      }
+      holdTick(dt);
+      tick(dt);
+      if(board.visible){render3D(dt);drawPanel()}
+      renderer.render(scene,camera);
+    });
+
+    addEventListener('resize',()=>{
+      camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth,innerHeight);
+      if(!inAR)framePreview();
+    });
+    if(document.fonts)document.fonts.load(`40px Bangers`).then(()=>{panelKey='';topDirty=true}).catch(()=>{});
+
+    window.__irrAR={get st(){return st},get app(){return appState},keys,down,up,begin,changeLevel,changeDiff,setHead:(x,y)=>{headG.x=x;headG.y=y},setAR:v=>{inAR=v},layers:{floor:FL.c,top:TOP.c,panel:PN.c}};
+  </script>
+</body>
+</html>
