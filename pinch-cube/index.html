@@ -58,7 +58,7 @@
     renderer.xr.enabled = true;
     renderer.xr.setReferenceSpaceType('local');
     renderer.xr.setFoveation(1); // cheaper edges where supported
-    renderer.xr.setFramebufferScaleFactor(0.65); // reduced resolution: smooth on Spectacles, sharper than 0.5
+    renderer.xr.setFramebufferScaleFactor(0.65); // reduced resolution: smooth on Specs, sharper than 0.5
     document.body.appendChild(renderer.domElement);
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 2.5));
@@ -207,7 +207,7 @@
     if (navigator.xr && await navigator.xr.isSessionSupported('immersive-ar').catch(() => false)) {
       info.innerHTML = 'Tap <b>Start AR</b>. Pinch to place a cube at your fingers — or tap the screen for one 1 m ahead.';
     } else {
-      info.innerHTML = 'WebXR AR isn’t available here.<br>Use <b>Chrome on Android</b> or <b>Spectacles</b>.';
+      info.innerHTML = 'WebXR AR isn’t available here.<br>Use <b>Chrome on Android</b> or <b>Specs</b>.';
     }
     document.getElementById('bar').appendChild(ARButton.createButton(renderer, {
       optionalFeatures: ['hand-tracking', 'dom-overlay'],

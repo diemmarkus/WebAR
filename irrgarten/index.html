@@ -71,7 +71,7 @@
         lvlAR:'KOPF ZUR SEITE = LEVEL',diffAR:'NICKEN = SCHWIERIGKEIT',lvlKb:'←/→ = LEVEL',diffKb:'↑/↓ = SCHWIERIGKEIT',
         pinch:'PINCH',tap:'TIPPEN',key:'LEERTASTE',pinchL:'Pinch',tapL:'Tippen',place:'$: Irrgarten hier hinstellen',placeAir:'$: hier hinstellen · besser auf einen Tisch',
         ok:'Tippe <b>Start AR</b>, schau auf einen Tisch und pinche (oder tippe), um den Irrgarten hinzustellen. Dann <b>Kopf nach vorn/hinten und zur Seite neigen</b> – der Tisch kippt mit, die Kugel rollt. Finde das Loch mit der Fahne, bevor die Hecken zuwachsen.',
-        noAr:'WebXR AR gibt’s hier nicht – unten eine spielbare Vorschau: <b>Pfeiltasten/WASD</b> oder <b>ziehen</b> = kippen, <b>Leertaste</b> = los.<br>Für AR: <b>Chrome auf Android</b> oder <b>Spectacles</b>.',
+        noAr:'WebXR AR gibt’s hier nicht – unten eine spielbare Vorschau: <b>Pfeiltasten/WASD</b> oder <b>ziehen</b> = kippen, <b>Leertaste</b> = los.<br>Für AR: <b>Chrome auf Android</b> oder <b>Specs</b>.',
         inAr:'Schau auf einen Tisch'},
       en:{title:'HEDGE MAZE!',lvl:n=>'LVL '+n,pts:n=>n+' PTS',grow:'OVERGROWN',level:n=>'LEVEL '+n+'!',find:'FIND THE HOLE!',sink:['PLOP!','IN!','HOLE!'],diff:['EASY','MEDIUM','HARD'],snip:'SNIP!',hurry:'HURRY!',rustle:['RUSTLE!','SWISH!'],
         moved:'MOVED!',zap:'ZAP!',munch:'MUNCH!',over:'OVERGROWN!',stuck:'The paths are shut.',fellT:'FELL IN!',fellP:'Wrong hole.',stungT:'STUNG!',stungP:'The wasps got you.',
@@ -80,7 +80,7 @@
         lvlAR:'HEAD TO THE SIDE = LEVEL',diffAR:'NOD = DIFFICULTY',lvlKb:'←/→ = LEVEL',diffKb:'↑/↓ = DIFFICULTY',
         pinch:'PINCH',tap:'TAP',key:'SPACE',pinchL:'Pinch',tapL:'Tap',place:'$: put the maze here',placeAir:'$: put it here · a table is best',
         ok:'Tap <b>Start AR</b>, look at a table and pinch (or tap) to put the maze there. Then <b>tilt your head forward/back and to the side</b> – the table tilts with you and the ball rolls. Find the flagged hole before the hedges close in.',
-        noAr:'WebXR AR isn’t available here – below is a playable preview: <b>arrow keys/WASD</b> or <b>drag</b> = tilt, <b>space</b> = go.<br>For AR use <b>Chrome on Android</b> or <b>Spectacles</b>.',
+        noAr:'WebXR AR isn’t available here – below is a playable preview: <b>arrow keys/WASD</b> or <b>drag</b> = tilt, <b>space</b> = go.<br>For AR use <b>Chrome on Android</b> or <b>Specs</b>.',
         inAr:'Look at a table'}};
     let langKey='de';
     try{const s=localStorage.getItem('irrgarten.lang');langKey=LANG[s]?s:((navigator.language||'de').startsWith('de')?'de':'en')}catch(_){}
@@ -625,7 +625,7 @@ function drawCaters(){
     renderer.xr.enabled=true;
     renderer.xr.setReferenceSpaceType('local');
     renderer.xr.setFoveation(1);
-    renderer.xr.setFramebufferScaleFactor(0.65); // same as the other experiments: smooth on Spectacles
+    renderer.xr.setFramebufferScaleFactor(0.65); // same as the other experiments: smooth on Specs
     document.body.appendChild(renderer.domElement);
     scene.add(new THREE.HemisphereLight(0xffffff,0x4a5a3a,1.3));
     const sun=new THREE.DirectionalLight(0xffffff,1.7);sun.position.set(-.4,1,.6);scene.add(sun);

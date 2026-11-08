@@ -68,7 +68,7 @@
             pinch:'PINCH', tap:'TIPP', placeWall:'$: Piste an diese Wand', place:'$: Piste hier · besser an eine Wand',
             pinchL:'Pinch', tapL:'Tippen',
             ok:'Tippe <b>Start AR</b>, schau auf eine Wand und pinche (oder tippe), um die Piste dort aufzuhängen. Gespielt wird mit dem Körper: <b>ducken</b> auf Gelb, <b>hüpfen</b> auf Orange und über Hürden, <b>Pinch halten</b> in der Luft = Salto.',
-            noAr:'WebXR AR gibt’s hier nicht – unten eine spielbare Vorschau: <b>S</b>/↓ ducken, <b>W</b>/↑ hüpfen, <b>Leertaste</b> halten = Salto.<br>Für AR: <b>Chrome auf Android</b> oder <b>Spectacles</b>.',
+            noAr:'WebXR AR gibt’s hier nicht – unten eine spielbare Vorschau: <b>S</b>/↓ ducken, <b>W</b>/↑ hüpfen, <b>Leertaste</b> halten = Salto.<br>Für AR: <b>Chrome auf Android</b> oder <b>Specs</b>.',
             inAr:'Schau auf eine Wand und tippe' },
       en: { title:'SKIING!', lvl:'LEVEL', yellow:'YELLOW = %D', orange:'ORANGE + HURDLE = %J', hold:'HOLD $ = FLIP', go:'$ = GO!', lvlSel:'%d/%j: LEVEL ', duck:'DUCK', hop:'JUMP', duckS:'DUCK', hopS:'JUMP', keyDuck:'S', keyHop:'W', keyHold:'SPACE', stand:'STAND STILL', move:'LONG HOLD = MOVE',
             win:'YOU WIN!', crash:'WIPEOUT!', hurdle:'WIPEOUT!', land:'CRASH!', slow:'TOO SLOW!', next:'$ = NEXT', retry:'$ = AGAIN',
@@ -77,7 +77,7 @@
             pinch:'PINCH', tap:'TAP', placeWall:'$: put the slope on this wall', place:'$: put the slope here · a wall is best',
             pinchL:'Pinch', tapL:'Tap',
             ok:'Tap <b>Start AR</b>, look at a wall and pinch (or tap) to hang the slope there. You play with your body: <b>duck</b> on yellow, <b>jump</b> on orange and over hurdles, <b>hold a pinch</b> in the air to flip.',
-            noAr:'WebXR AR isn’t available here – below is a playable preview: <b>S</b>/↓ duck, <b>W</b>/↑ jump, hold <b>space</b> = flip.<br>For AR use <b>Chrome on Android</b> or <b>Spectacles</b>.',
+            noAr:'WebXR AR isn’t available here – below is a playable preview: <b>S</b>/↓ duck, <b>W</b>/↑ jump, hold <b>space</b> = flip.<br>For AR use <b>Chrome on Android</b> or <b>Specs</b>.',
             inAr:'Look at a wall and tap' } };
     let langKey = 'de';
     try { const s = localStorage.getItem('irrgarten.lang'); langKey = LANG[s] ? s : ((navigator.language || 'de').startsWith('de') ? 'de' : 'en'); } catch (_) {}
@@ -567,7 +567,7 @@
     renderer.xr.enabled=true;
     renderer.xr.setReferenceSpaceType('local');
     renderer.xr.setFoveation(1);
-    renderer.xr.setFramebufferScaleFactor(0.65); // same as the other experiments: smooth on Spectacles
+    renderer.xr.setFramebufferScaleFactor(0.65); // same as the other experiments: smooth on Specs
     document.body.appendChild(renderer.domElement);
 
     // The board: two transparent planes, nothing else
