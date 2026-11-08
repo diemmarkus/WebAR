@@ -95,7 +95,7 @@
       scene.add(c);
     }
 
-    // --- Hand tracking: pinch thumb + index to drop a cube at your fingertips (Spectacles, Quest, …) ---
+    // --- Hand tracking: pinch thumb + index to place a cube on the circle (or at your fingertips) ---
     const PINCH_ON = 0.015, PINCH_OFF = 0.03; // metres, with hysteresis
     const hands = [0, 1].map(i => {
       const hand = renderer.xr.getHand(i);
@@ -126,7 +126,13 @@
         if (!h.pinching && d < PINCH_ON) {
           h.pinching = true;
           const cube = makeCube();
-          cube.position.copy(h.dot.position).y -= 0.05; // centre the cube on the pinch point
+          if (reticle.visible) {
+            // Pinch = "OK": place the cube on the surface under the circle
+            reticle.matrix.decompose(cube.position, cube.quaternion, cube.scale);
+          } else {
+            // No surface: place it at the pinch point
+            cube.position.copy(h.dot.position).y -= 0.05;
+          }
           scene.add(cube);
           onPlaced();
         } else if (h.pinching && d > PINCH_OFF) {
