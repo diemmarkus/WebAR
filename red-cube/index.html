@@ -42,11 +42,12 @@
     const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 20);
     camera.position.set(0, 0, 0.6);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: 'high-performance' });
     renderer.setPixelRatio(devicePixelRatio);
     renderer.setSize(innerWidth, innerHeight);
     renderer.xr.enabled = true;
     renderer.xr.setReferenceSpaceType('local');
+    renderer.xr.setFoveation(1); // cheaper edges where supported
     document.body.appendChild(renderer.domElement);
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 2.5));
@@ -58,7 +59,7 @@
     const cubeGeo = new THREE.BoxGeometry(0.1, 0.1, 0.1).translate(0, 0.05, 0); // sit on the surface
     const makeCube = () => new THREE.Mesh(
       cubeGeo,
-      new THREE.MeshStandardMaterial({ color: 0xe53935, roughness: 0.4 })
+      new THREE.MeshLambertMaterial({ color: 0xe53935 })
     );
 
     // Preview cube shown before entering AR (or on unsupported devices)
@@ -165,6 +166,36 @@
       return tracked;
     }
 
+
+    // --- FPS counter, floating in view (DOM text isn't visible on glasses) ---
+    const fpsCanvas = document.createElement('canvas');
+    fpsCanvas.width = 256; fpsCanvas.height = 64;
+    const fpsCtx = fpsCanvas.getContext('2d');
+    const fpsTex = new THREE.CanvasTexture(fpsCanvas);
+    fpsTex.colorSpace = THREE.SRGBColorSpace;
+    const fpsSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: fpsTex, depthTest: false, transparent: true }));
+    fpsSprite.scale.set(0.08, 0.02, 1);
+    fpsSprite.position.set(0, -0.12, -0.6); // below centre of view, 60 cm ahead
+    fpsSprite.renderOrder = 20;
+    fpsSprite.visible = false;
+    camera.add(fpsSprite);
+    scene.add(camera);
+    let fpsFrames = 0, fpsLast = performance.now();
+    function updateFps(now) {
+      fpsFrames++;
+      if (now - fpsLast < 1000) return;
+      const fps = Math.round(fpsFrames * 1000 / (now - fpsLast));
+      fpsFrames = 0; fpsLast = now;
+      fpsCtx.clearRect(0, 0, 256, 64);
+      fpsCtx.fillStyle = 'rgba(0,0,0,0.5)';
+      fpsCtx.fillRect(0, 0, 256, 64);
+      fpsCtx.fillStyle = fps >= 50 ? '#9f9' : fps >= 30 ? '#ff9' : '#f88';
+      fpsCtx.font = '600 40px ui-monospace, monospace';
+      fpsCtx.textAlign = 'center'; fpsCtx.textBaseline = 'middle';
+      fpsCtx.fillText(fps + ' fps', 128, 34);
+      fpsTex.needsUpdate = true;
+    }
+
     // --- AR button (needs HTTPS + a WebXR-capable browser) ---
     if (navigator.xr && await navigator.xr.isSessionSupported('immersive-ar').catch(() => false)) {
       info.innerHTML = 'Tap <b>Start AR</b>, move your phone slowly to find a surface, then tap to place cubes.';
@@ -228,7 +259,9 @@
     });
 
     renderer.setAnimationLoop((t, frame) => {
+      fpsSprite.visible = !!frame;
       if (frame) {
+        updateFps(performance.now());
         const session = renderer.xr.getSession();
         const refSpace = renderer.xr.getReferenceSpace();
 
