@@ -66,23 +66,23 @@
 
     // --- Texts (German / English) ---
     const LANG = {
-      de: { title:'SKIING!', lvl:'LEVEL', yellow:'GELB = %D', orange:'ORANGE + HÜRDE = %J', hold:'$ HALTEN = SALTO', go:'$ = LOS!', lvlSel:'%d/%j: LEVEL ', duck:'DUCKEN', hop:'HÜPFEN', duckS:'DUCK', hopS:'HÜPF', keyDuck:'S', keyHop:'W', keyHold:'LEERTASTE', stand:'GERADE STEHEN', move:'LANG HALTEN = UMSETZEN',
+      de: { title:'SKIING!', lvl:'LEVEL', yellow:'GELB = %D', orange:'ORANGE + HÜRDE = %J', hold:'%T = SALTO',tilt:'KOPF NEIGEN',keyTilt:'A/D', go:'$ = LOS!', lvlSel:'%d/%j: LEVEL ', duck:'DUCKEN', hop:'HÜPFEN', duckS:'DUCK', hopS:'HÜPF', keyDuck:'S', keyHop:'W', keyHold:'LEERTASTE', stand:'GERADE STEHEN', move:'LANG HALTEN = UMSETZEN',
             win:'GEWONNEN!', crash:'GESTÜRZT!', hurdle:'GESTÜRZT!', land:'BRUCHLANDUNG!', slow:'ZU LANGSAM!', next:'$ = WEITER', retry:'$ = NOCHMAL',
             time:'ZEIT', flips:'SALTOS', cpu:'CPU', wob:'WACKELIG!', finish:'ZIEL', goT:'LOS!',
             super:'SUPER!', good:'GUT!', oops:'HOPPLA!', jump:'SPRUNG!', flip:'SALTO!', flip2:'DOPPEL!', flip3:'DREIFACH!', ouch:'AUTSCH!',
             pinch:'PINCH', tap:'TIPP', placeWall:'$: Piste an diese Wand', place:'$: Piste hier · besser an eine Wand',
             pinchL:'Pinch', tapL:'Tippen',
-            ok:'Tippe <b>Start AR</b>, schau auf eine Wand und pinche (oder tippe), um die Piste dort aufzuhängen. Gespielt wird mit dem Körper: <b>ducken</b> auf Gelb, <b>hüpfen</b> auf Orange und über Hürden, <b>Pinch halten</b> in der Luft = Salto.',
-            noAr:'WebXR AR gibt’s hier nicht – unten eine spielbare Vorschau: <b>S</b>/↓ ducken, <b>W</b>/↑ hüpfen, <b>Leertaste</b> halten = Salto.<br>Für AR: <b>Chrome auf Android</b> oder <b>Specs</b>.',
+            ok:'Tippe <b>Start AR</b>, schau auf eine Wand und pinche (oder tippe), um die Piste dort aufzuhängen. Gespielt wird mit dem Körper: <b>ducken</b> auf Gelb, <b>hüpfen</b> auf Orange und über Hürden, <b>Kopf neigen</b> in der Luft = Salto (links rückwärts, rechts vorwärts), Kopf gerade = landen.',
+            noAr:'WebXR AR gibt’s hier nicht – unten eine spielbare Vorschau: <b>S</b>/↓ ducken, <b>W</b>/↑ hüpfen, <b>A</b>/<b>D</b> halten = Salto rückwärts/vorwärts.<br>Für AR: <b>Chrome auf Android</b> oder <b>Specs</b>.',
             inAr:'Schau auf eine Wand und tippe' },
-      en: { title:'SKIING!', lvl:'LEVEL', yellow:'YELLOW = %D', orange:'ORANGE + HURDLE = %J', hold:'HOLD $ = FLIP', go:'$ = GO!', lvlSel:'%d/%j: LEVEL ', duck:'DUCK', hop:'JUMP', duckS:'DUCK', hopS:'JUMP', keyDuck:'S', keyHop:'W', keyHold:'SPACE', stand:'STAND STILL', move:'LONG HOLD = MOVE',
+      en: { title:'SKIING!', lvl:'LEVEL', yellow:'YELLOW = %D', orange:'ORANGE + HURDLE = %J', hold:'%T = FLIP',tilt:'TILT HEAD',keyTilt:'A/D', go:'$ = GO!', lvlSel:'%d/%j: LEVEL ', duck:'DUCK', hop:'JUMP', duckS:'DUCK', hopS:'JUMP', keyDuck:'S', keyHop:'W', keyHold:'SPACE', stand:'STAND STILL', move:'LONG HOLD = MOVE',
             win:'YOU WIN!', crash:'WIPEOUT!', hurdle:'WIPEOUT!', land:'CRASH!', slow:'TOO SLOW!', next:'$ = NEXT', retry:'$ = AGAIN',
             time:'TIME', flips:'FLIPS', cpu:'CPU', wob:'WOBBLY!', finish:'FINISH', goT:'GO!',
             super:'SUPER!', good:'GOOD!', oops:'OOPS!', jump:'JUMP!', flip:'FLIP!', flip2:'DOUBLE!', flip3:'TRIPLE!', ouch:'OUCH!',
             pinch:'PINCH', tap:'TAP', placeWall:'$: put the slope on this wall', place:'$: put the slope here · a wall is best',
             pinchL:'Pinch', tapL:'Tap',
-            ok:'Tap <b>Start AR</b>, look at a wall and pinch (or tap) to hang the slope there. You play with your body: <b>duck</b> on yellow, <b>jump</b> on orange and over hurdles, <b>hold a pinch</b> in the air to flip.',
-            noAr:'WebXR AR isn’t available here – below is a playable preview: <b>S</b>/↓ duck, <b>W</b>/↑ jump, hold <b>space</b> = flip.<br>For AR use <b>Chrome on Android</b> or <b>Specs</b>.',
+            ok:'Tap <b>Start AR</b>, look at a wall and pinch (or tap) to hang the slope there. You play with your body: <b>duck</b> on yellow, <b>jump</b> on orange and over hurdles, <b>tilt your head</b> in the air to flip (left = backflip, right = front flip), straighten up to land.',
+            noAr:'WebXR AR isn’t available here – below is a playable preview: <b>S</b>/↓ duck, <b>W</b>/↑ jump, hold <b>A</b>/<b>D</b> = backflip/front flip.<br>For AR use <b>Chrome on Android</b> or <b>Specs</b>.',
             inAr:'Look at a wall and tap' } };
     let langKey = 'de';
     try { const s = localStorage.getItem('irrgarten.lang'); langKey = LANG[s] ? s : ((navigator.language || 'de').startsWith('de') ? 'de' : 'en'); } catch (_) {}
@@ -110,7 +110,9 @@
       const put=(yy,k,id)=>{if(x<N){TY_[x]=yy;KIND[x]=k;MID[x]=id==null?-1:id}x++};
       for(let i=0;i<90;i++)put(y+=0.12,0);
       const moguls=n=>{for(let j=0;j<n;j++){
-        const P=Math.round(42+r()*10-Math.min(lv,6)),A=prof.A[0]+r()*(prof.A[1]-prof.A[0]),id=mogs.length,x0=x,y0=y;
+        // AR: you duck with your whole body, so every bump needs ~0.8 s. Bumps grow along a series
+        // as you pick up speed (100 px first, up to 180 px), and get taller with their length.
+        const P=Math.round(Math.min(180,100+13*j)*(0.92+r()*0.16)),A=(prof.A[0]+r()*(prof.A[1]-prof.A[0]))*Math.pow(P/45,0.6),id=mogs.length,x0=x,y0=y;
         mogs.push({x0,P});
         r(); // keeps the course identical to the original (it rolled for a tree here)
         for(let u=0;u<P;u++){const t=u/P;const k=t>=0.03&&t<=0.45?1:(t>=0.52&&t<=0.97?2:0);put(y0+SLOPE*u+A*(1-Math.cos(2*Math.PI*t))/2,k,id)}
@@ -175,7 +177,7 @@
       if(k===1){
         const id=MID[Math.floor(r.x)];if(id===r.lastM)return;r.lastM=id;
         const m=mogs[id],u=(r.x-m.x0)/m.P,perfect=u>=0.05&&u<=0.24;
-        r.v+=(perfect?20:14)*(r.ai?SK.boost:1);r.push=0.18;r.streak++;if(r.wob&&r.streak>=3)r.wob=0;
+        r.v+=(perfect?20:14)*(r.ai?SK.boost:1)*(m.P/45);r.push=0.18;r.streak++;if(r.wob&&r.streak>=3)r.wob=0;
         spray(r,perfect?8:5);
         if(!r.ai){pop(perfect?'super':'good',perfect?'#FFD23F':'#FFFFFF',r);beep(perfect?'super':'good')}
       }else if(k===2||k===3){wrong(r)}
@@ -187,7 +189,7 @@
     function mogulBoost(r){
       const id=MID[Math.floor(r.x)];if(id===r.lastM)return;r.lastM=id;
       const m=mogs[id],u=(r.x-m.x0)/m.P,perfect=u>=0.05&&u<=0.24;
-      r.v+=(perfect?20:14);r.push=0.25;r.streak++;if(r.wob&&r.streak>=3)r.wob=0;
+      r.v+=(perfect?20:14)*(m.P/45);r.push=0.25;r.streak++;if(r.wob&&r.streak>=3)r.wob=0;
       spray(r,perfect?8:5);pop(perfect?'super':'good',perfect?'#FFD23F':'#FFFFFF',r);beep(perfect?'super':'good');
     }
     function duck(r){
@@ -230,7 +232,7 @@
     }
     function land(r){
       const g=TY(r.x);r.air=false;r.y=g;r.vy=0;
-      const k=-r.rot,n=Math.round(k/360),rem=k-n*360;
+      const k=Math.abs(r.rot),n=Math.round(k/360),rem=k-n*360;
       r.rot=0;r.spin=false;
       if(Math.abs(rem)>68){if(r.ai){r.v*=0.6}else{crash(r,'land');return}}
       r.wob=0;
@@ -259,9 +261,11 @@
         r.ang+=(Math.atan(s)-r.ang)*Math.min(1,dt*14);
       }else{
         r.x+=r.v*dt;r.vy+=G*dt;r.y+=r.vy*dt;
-        r.spin=r.big&&r.held&&r.holdT>0.12;
-        if(r.spin)r.rot-=SPIN*dt;
-        else{const k=-r.rot,n=Math.floor((k+240)/360),tgt=-n*360,d=tgt-r.rot,st=SPIN*1.25*dt;r.rot+=Math.abs(d)<=st?d:Math.sign(d)*st}
+        // spin: -1 = backflip (pinch held, or head tilted left), +1 = front flip (head tilted right)
+        const dir=!r.big?0:(!r.ai&&tiltDir)?tiltDir:(r.held&&r.holdT>0.12)?-1:0;
+        r.spin=dir!==0;
+        if(r.spin)r.rot+=dir*SPIN*dt;
+        else{const sg=r.rot<0?-1:1,k=Math.abs(r.rot),n=Math.floor((k+240)/360),tgt=sg*n*360,d=tgt-r.rot,st=SPIN*1.25*dt;r.rot+=Math.abs(d)<=st?d:Math.sign(d)*st}
         r.ang+=(Math.atan2(r.vy,r.v)*0.55-r.ang)*Math.min(1,dt*6);
         if(r.vy>0&&r.y>=TY(r.x))land(r);
       }
@@ -435,7 +439,7 @@
       g.fillStyle='rgba(27,31,59,0.55)';g.fillRect(8,y,CW-16,h);y+=5;
       lines.forEach(([s,col,size])=>{size=size||8;const fit=Math.min(size,Math.floor((CW-20)/Math.max(1,s.length)));txt(g,s,CW/2,y+size/2,col,fit);y+=size+4});
     }
-    const sub=s=>s.replace('$',inAR?inputWord():T.keyHold).replace('%D',inAR?T.duck:T.keyDuck).replace('%J',inAR?T.hop:T.keyHop).replace('%d',inAR?T.duckS:T.keyDuck).replace('%j',inAR?T.hopS:T.keyHop);
+    const sub=s=>s.replace('$',inAR?inputWord():T.keyHold).replace('%D',inAR?T.duck:T.keyDuck).replace('%J',inAR?T.hop:T.keyHop).replace('%T',inAR?T.tilt:T.keyTilt).replace('%d',inAR?T.duckS:T.keyDuck).replace('%j',inAR?T.hopS:T.keyHop);
 
     function render(){
       for(const L of[FR,BK])L.g.clearRect(0,0,CW,CH);
@@ -521,6 +525,13 @@
     // --- Body tracking: head height vs. standing height ---
     const DUCK=0.10,DUCK_OFF=0.05,JUMP=0.05,JUMP_OFF=0.02,JUMP_V=0.35; // metres, m/s
     let bBase=null,bY=0,bPrev=null,bV=0,bDuck=false,bJump=false;
+    // Head tilt (roll): left = backflip, right = front flip; straighten up to land
+    const TILT_ON=0.3,TILT_OFF=0.15; // sin of the roll angle (~17° on, ~9° off)
+    let tiltDir=0;
+    function tiltUpdate(rollSin){
+      if(tiltDir===0){if(rollSin>TILT_ON)tiltDir=-1;else if(rollSin<-TILT_ON)tiltDir=1}
+      else if(Math.abs(rollSin)<TILT_OFF)tiltDir=0;
+    }
     function bodyUpdate(y,dt){
       if(dt<=0)return;
       if(bPrev!=null){const v=(y-bPrev)/dt;bV+=(v-bV)*Math.min(1,dt*15)}
@@ -731,8 +742,11 @@
     addEventListener('keydown',e=>{if(inAR||e.repeat)return;
       if(e.code==='Space'||e.code==='Enter'){e.preventDefault();down()}
       else if(e.code==='KeyS'||e.code==='ArrowDown'){e.preventDefault();onDuck()}
-      else if(e.code==='KeyW'||e.code==='ArrowUp'){e.preventDefault();onHop()}});
-    addEventListener('keyup',e=>{if(!inAR&&(e.code==='Space'||e.code==='Enter'))up()});
+      else if(e.code==='KeyW'||e.code==='ArrowUp'){e.preventDefault();onHop()}
+      else if(e.code==='KeyA'||e.code==='ArrowLeft'){e.preventDefault();tiltDir=-1}
+      else if(e.code==='KeyD'||e.code==='ArrowRight'){e.preventDefault();tiltDir=1}});
+    addEventListener('keyup',e=>{if(inAR)return;if(e.code==='Space'||e.code==='Enter')up();
+      if(['KeyA','KeyD','ArrowLeft','ArrowRight'].includes(e.code))tiltDir=0});
     addEventListener('click',initAudio,{capture:true});
 
     // --- AR button ---
@@ -761,7 +775,8 @@
       const dt=last?Math.min(0.05,Math.max(0,(t-last)/1000)):0;last=t;
       if(frame){
         updateHands();
-        renderer.xr.getCamera().getWorldPosition(camPos);bodyUpdate(camPos.y,dt);
+        const xc=renderer.xr.getCamera();xc.getWorldPosition(camPos);bodyUpdate(camPos.y,dt);
+        xc.getWorldQuaternion(camQuat);tiltUpdate(fwd.set(1,0,0).applyQuaternion(camQuat).y);
         if(placing)updatePlacing(frame);
         if(inAR&&state!=='place')info.textContent='';
       }
@@ -778,7 +793,7 @@
     });
     if(document.fonts)document.fonts.load(`8px ${FONT}`).catch(()=>{});
 
-    window.__ski={layers:[FR.c,BK.c],bodyUpdate,onDuck,onHop,setAR:v=>{inAR=v},get bBase(){return bBase},get state(){return state},get P(){return P},get A(){return A},down,up,startRace,get level(){return level}};
+    window.__ski={tilt:v=>{tiltDir=v},layers:[FR.c,BK.c],mogs:()=>mogs,kindAt:x=>kindAt(x),bodyUpdate,onDuck,onHop,setAR:v=>{inAR=v},get bBase(){return bBase},get state(){return state},get P(){return P},get A(){return A},down,up,startRace,get level(){return level}};
   </script>
 </body>
 </html>
